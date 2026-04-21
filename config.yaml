@@ -1,0 +1,26 @@
+server:
+  host: "0.0.0.0"
+  port: 8000
+database:
+  host: "localhost"
+  port: 5432
+  user: "devadmin"
+  password: "devadmin123"
+  database: "legalize_kp"
+qdrant:
+  host: "localhost"
+  port: 6333
+  collection: "legalize_kp_laws"
+embedding:
+  model: "gemini-embedding-001"
+  dimension: 3072
+  batch_size: 100
+data:
+  repo_path: "E:/004_북한법/legalize-kp"
+  kp_dir: "E:/004_북한법/legalize-kp/kp"
+external:
+  beopmang_base_url: "https://api.beopmang.org/api/v4"
+  lawgo_base_url: "https://www.law.go.kr/DRF"
+  lawgo_oc: "slpy22"
+mcp:
+  server_name: "legalize-kp"
