@@ -49,6 +49,45 @@ async def compare_endpoint(
         if not kp_name:
             return make_response({"error": "kp_name parameter required"}, t0)
         data = await mapping_service.get_mapping(session, kp_name)
+
+        # 북한법 상세 정보 추가 (laws 테이블에서)
+        from app.repositories.law_repo import LawRepository
+        law_repo = LawRepository(session)
+        kp_law = await law_repo.get_by_name(kp_name)
+        if kp_law:
+            data["kp_info"] = {
+                "name": kp_law.get("name", kp_name),
+                "enactment_date": str(kp_law.get("enactment_date", "") or ""),
+                "latest_version_date": str(kp_law.get("latest_version_date", "") or ""),
+                "total_articles": kp_law.get("total_articles"),
+                "chapter_count": kp_law.get("chapter_count"),
+                "category": kp_law.get("category", ""),
+                "source": kp_law.get("source", ""),
+            }
+        else:
+            data["kp_info"] = None
+
+        # 남한법 상세 정보 (법제처 API 폴백)
+        kr_names = data.get("kr_names", [])
+        if kr_names:
+            client = KrLawClient()
+            try:
+                kr_data = await client.get_law_overview(kr_names[0])
+                if kr_data:
+                    data["kr_info"] = {
+                        "name": kr_data.get("law_name", kr_names[0]),
+                        "total_articles": kr_data.get("total_articles"),
+                        "source": kr_data.get("source", ""),
+                    }
+                else:
+                    data["kr_info"] = {"name": kr_names[0], "source": "조회 실패"}
+            except Exception:
+                data["kr_info"] = {"name": kr_names[0], "source": "조회 실패"}
+            finally:
+                await client.close()
+        else:
+            data["kr_info"] = None
+
         return make_response(data, t0)
 
     elif action == "articles":

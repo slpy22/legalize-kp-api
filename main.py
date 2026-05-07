@@ -1,6 +1,11 @@
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import load_config
+
+# .env 파일에서 환경변수 자동 로드
+load_dotenv(Path(__file__).parent / ".env")
 from app.api.router import router
 from app.compare.router import router as compare_router
 from app.mcp.server import mcp

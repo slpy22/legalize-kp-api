@@ -26,9 +26,10 @@ async def compare_articles(
     # --- KP articles from local DB ---
     result = await session.execute(
         text(
-            "SELECT article_number, article_title, content "
-            "FROM articles WHERE law_name = :name "
-            "ORDER BY article_number"
+            "SELECT a.article_number, a.article_title, a.content "
+            "FROM articles a JOIN laws l ON a.law_id = l.id "
+            "WHERE l.name = :name "
+            "ORDER BY a.position"
         ),
         {"name": kp_name},
     )
@@ -42,13 +43,11 @@ async def compare_articles(
         for r in kp_rows
     ]
 
-    # --- KR articles from Beopmang ---
-    kr_results = await beopmang_client.search_law(kr_name)
+    # --- KR articles from law.go.kr via get_law_overview ---
+    kr_data = await beopmang_client.get_law_overview(kr_name)
     kr_articles: list[dict] = []
-    if kr_results:
-        # The first hit should contain article data
-        first = kr_results[0] if isinstance(kr_results, list) else kr_results
-        raw_articles = first.get("articles", [])
+    if kr_data:
+        raw_articles = kr_data.get("articles", [])
         for a in raw_articles:
             kr_articles.append(
                 {
