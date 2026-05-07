@@ -8,9 +8,15 @@ from __future__ import annotations
 from kiwipiepy import Kiwi
 from sqlalchemy import text
 
+import asyncio
+import logging
+import os
+import re
+
 from app.core.database import get_session_factory
 from app.chat.term_converter import expand_query
 
+logger = logging.getLogger(__name__)
 _kiwi = Kiwi()
 
 
@@ -310,3 +316,218 @@ async def lookup_term(term: str) -> str:
         return "\n".join(lines)
     finally:
         await session.close()
+
+
+# ── 주제-키워드 매핑 (시맨틱 검색 다각도 쿼리 생성용) ──
+_TOPIC_SEARCH_ANGLES = {
+    "과학": [
+        "과학기술 법령 처벌 제재 위반",
+        "과학기술 활동 국가 통제 감독 승인 허가",
+        "정보 접근 제한 콤퓨터 인터넷 통제 차단",
+        "과학자 기술자 배치 이동 인재 관리",
+        "소프트웨어 표현 검열 비밀 보안",
+    ],
+    "노동": [
+        "노동 근로 임금 휴식 권리 보호",
+        "노동 의무 강제 동원 배치",
+        "노동 처벌 제재 위반",
+    ],
+    "투자": [
+        "외국인 투자 제한 금지 승인",
+        "경제 활동 통제 처벌 몰수",
+        "특구 경제지대 투자 권리 보호",
+    ],
+    "환경": [
+        "환경 오염 처벌 책임",
+        "자연 보호 이용 제한 금지",
+    ],
+    "default": [
+        "기본권 침해 처벌 제재 위반",
+        "국가 통제 감독 승인 허가 금지",
+        "의무 강제 제한 자유 권리",
+    ],
+}
+
+# 기본권 분석 카테고리와 키워드
+_RIGHTS_CATEGORIES = {
+    "처벌 조항 (신체의 자유)": ["처벌", "벌금", "몰수", "로동교양", "무보수", "형사", "박탈"],
+    "승인/허가 제한 (활동의 자유)": ["승인", "허가", "할수 없다", "비준", "할 수 없다"],
+    "국가 통제/감독 (자율성 침해)": ["통제", "감독", "검열", "지도통제"],
+    "정보 통제 (표현/알 권리)": ["비밀", "차단", "격페", "류포금지", "시청", "복사"],
+    "인력 통제 (직업선택의 자유)": ["배치", "이동", "내보내", "뽑아", "옮기려"],
+}
+
+
+async def deep_search(query: str, topic: str = "") -> str:
+    """복합 심층 검색 — 시맨틱 + 키워드 + 관련법 자동 확장으로 포괄적으로 조사합니다.
+    단순 검색이 아닌 연구 수준의 조사가 필요할 때 사용하세요.
+
+    내부적으로:
+    1. 주제 영역 법령 특정
+    2. 다각도 시맨틱 검색 (3~5회 병렬)
+    3. 발견된 법령에서 키워드 보충 검색
+    4. 형법/행정처벌법 관련 조문 추가
+    5. 카테고리별 자동 분류
+
+    Args:
+        query: 조사 주제. 예: '과학기술 법령의 기본권 침해 요소', '노동법의 처벌 규정'
+        topic: 주제 영역 힌트 (선택). 예: '과학', '노동', '투자'. 비우면 자동 감지
+
+    Returns:
+        카테고리별로 분류된 포괄적 조사 결과
+    """
+    try:
+        # 0. 주제 감지
+        if not topic:
+            nouns = _extract_nouns(query)
+            for kw in ["과학", "기술", "정보", "소프트", "쏘프트", "콤퓨터", "발명", "특허"]:
+                if any(kw in n for n in nouns) or kw in query:
+                    topic = "과학"
+                    break
+            if not topic:
+                for kw in ["노동", "근로", "로동"]:
+                    if kw in query:
+                        topic = "노동"
+                        break
+            if not topic:
+                for kw in ["투자", "외국인", "경제"]:
+                    if kw in query:
+                        topic = "투자"
+                        break
+            if not topic:
+                topic = "default"
+
+        # 1. 주제 관련 법령 특정
+        factory = get_session_factory()
+        async with factory() as session:
+            topic_kw = {"과학": "%과학%", "노동": "%로동%", "투자": "%투자%", "환경": "%환경%"}
+            like_pattern = topic_kw.get(topic, f"%{topic}%")
+
+            r = await session.execute(text(
+                """SELECT id, name FROM laws
+                WHERE name ILIKE :p1 OR name ILIKE '%기술%'
+                OR name ILIKE '%정보%' OR name ILIKE '%쏘프트%'
+                OR name ILIKE '%콤퓨터%' OR name ILIKE '%발명%'"""
+                if topic == "과학" else
+                """SELECT id, name FROM laws WHERE name ILIKE :p1"""
+            ), {"p1": like_pattern})
+            scoped_laws = {row["id"]: row["name"] for row in r.mappings().all()}
+
+        scoped_ids = list(scoped_laws.keys())
+        scoped_names = list(scoped_laws.values())
+
+        # 2. 다각도 시맨틱 검색 (병렬)
+        angles = _TOPIC_SEARCH_ANGLES.get(topic, _TOPIC_SEARCH_ANGLES["default"])
+        angles = [query] + angles  # 원본 쿼리도 포함
+
+        import google.genai as genai_embed
+        embed_client = genai_embed.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+        from app.core.config import get_config
+        from app.core.database import get_qdrant
+        from app.repositories.qdrant_search import QdrantSearchRepository
+
+        cfg = get_config()
+        model = cfg.get("embedding", {}).get("model", "gemini-embedding-001")
+        collection = cfg.get("qdrant", {}).get("collection", "legalize_kp_laws")
+        qdrant_repo = QdrantSearchRepository(get_qdrant(), collection)
+
+        all_articles: dict[str, dict] = {}  # key → article
+
+        # 시맨틱 검색 (순차 — embedding API rate limit 고려)
+        for angle in angles[:5]:
+            try:
+                resp = embed_client.models.embed_content(model=model, contents=angle)
+                vector = resp.embeddings[0].values
+                hits = qdrant_repo.search(vector, limit=10)
+                for h in hits:
+                    name = h.get("law_name", "")
+                    num = h.get("article_number", "")
+                    key = f"{name}_제{num}조"
+                    if key not in all_articles:
+                        all_articles[key] = h
+            except Exception as e:
+                logger.warning(f"Semantic search failed for '{angle[:30]}': {e}")
+
+        # 3. 키워드 보충 검색 (주제 법령에서)
+        kw_patterns = ["처벌", "금지", "할수 없다", "승인을 받", "의무적", "통제", "감독", "몰수"]
+        async with factory() as session:
+            for p in kw_patterns:
+                try:
+                    r = await session.execute(text(
+                        """SELECT a.article_number, a.article_title, a.content, l.name as law_name
+                        FROM articles a JOIN laws l ON a.law_id = l.id
+                        WHERE a.law_id = ANY(:ids)
+                        AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
+                        ORDER BY l.name, a.position LIMIT 10"""
+                    ), {"ids": scoped_ids, "kw": f"%{p}%"})
+                    for row in r.mappings().all():
+                        key = f"{row['law_name']}_제{row['article_number']}조"
+                        if key not in all_articles:
+                            all_articles[key] = dict(row)
+                except Exception:
+                    pass
+
+            # 4. 형법/행정처벌법 관련 조문 추가
+            topic_terms = {"과학": ["과학", "기술", "정보", "쏘프트"], "노동": ["로동", "근로"], "투자": ["투자", "외국인"]}
+            terms = topic_terms.get(topic, [topic])
+            for term in terms:
+                try:
+                    r = await session.execute(text(
+                        """SELECT a.article_number, a.article_title, a.content, l.name as law_name
+                        FROM articles a JOIN laws l ON a.law_id = l.id
+                        WHERE l.name IN ('형법', '행정처벌법')
+                        AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
+                        ORDER BY l.name, a.position LIMIT 10"""
+                    ), {"kw": f"%{term}%"})
+                    for row in r.mappings().all():
+                        key = f"{row['law_name']}_제{row['article_number']}조"
+                        if key not in all_articles:
+                            all_articles[key] = dict(row)
+                except Exception:
+                    pass
+
+        # 5. 카테고리별 분류
+        categorized: dict[str, list[str]] = {cat: [] for cat in _RIGHTS_CATEGORIES}
+        uncategorized: list[str] = []
+
+        for key, art in all_articles.items():
+            content = art.get("content", art.get("content_snippet", ""))
+            name = art.get("law_name", "")
+            num = art.get("article_number", "")
+            title = art.get("article_title", "")
+            preview = content[:150] + "..." if len(content) > 150 else content
+            entry = f"**{name} 제{num}조 {title}**: {preview}"
+
+            matched = False
+            for cat, keywords in _RIGHTS_CATEGORIES.items():
+                if any(kw in content for kw in keywords):
+                    if entry not in categorized[cat]:
+                        categorized[cat].append(entry)
+                    matched = True
+                    break
+            if not matched:
+                uncategorized.append(entry)
+
+        # 6. 결과 조립
+        total = sum(len(v) for v in categorized.values())
+        lines = [f"## 심층 조사 결과 ({len(all_articles)}개 조문 발견, {len(scoped_names)}개 법령 대상)\n"]
+        lines.append(f"조사 대상 법령: {', '.join(scoped_names[:10])}")
+        if len(scoped_names) > 10:
+            lines.append(f"  외 {len(scoped_names)-10}개")
+
+        for cat, items in categorized.items():
+            if items:
+                lines.append(f"\n### {cat} ({len(items)}건)")
+                for item in items[:8]:  # 카테고리당 최대 8개
+                    lines.append(f"- {item}")
+                if len(items) > 8:
+                    lines.append(f"  ... 외 {len(items)-8}건")
+
+        result = "\n".join(lines)
+        if len(result) > 8000:
+            result = result[:8000] + "\n\n...(일부 생략)"
+        return result
+
+    except Exception as e:
+        logger.exception("deep_search failed")
+        return f"심층 검색 오류: {str(e)[:200]}"
