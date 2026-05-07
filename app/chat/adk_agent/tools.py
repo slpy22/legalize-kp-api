@@ -318,125 +318,129 @@ async def lookup_term(term: str) -> str:
         await session.close()
 
 
-# ── 주제-키워드 매핑 (시맨틱 검색 다각도 쿼리 생성용) ──
-_TOPIC_SEARCH_ANGLES = {
-    "과학": [
-        "과학기술 법령 처벌 제재 위반",
-        "과학기술 활동 국가 통제 감독 승인 허가",
-        "정보 접근 제한 콤퓨터 인터넷 통제 차단",
-        "과학자 기술자 배치 이동 인재 관리",
-        "소프트웨어 표현 검열 비밀 보안",
-    ],
-    "노동": [
-        "노동 근로 임금 휴식 권리 보호",
-        "노동 의무 강제 동원 배치",
-        "노동 처벌 제재 위반",
-    ],
-    "투자": [
-        "외국인 투자 제한 금지 승인",
-        "경제 활동 통제 처벌 몰수",
-        "특구 경제지대 투자 권리 보호",
-    ],
-    "환경": [
-        "환경 오염 처벌 책임",
-        "자연 보호 이용 제한 금지",
-    ],
-    "default": [
-        "기본권 침해 처벌 제재 위반",
-        "국가 통제 감독 승인 허가 금지",
-        "의무 강제 제한 자유 권리",
-    ],
-}
+# ── LLM 기반 동적 연구 계획 ──
 
-# 기본권 분석 카테고리와 키워드
-_RIGHTS_CATEGORIES = {
-    "처벌 조항 (신체의 자유)": ["처벌", "벌금", "몰수", "로동교양", "무보수", "형사", "박탈"],
-    "승인/허가 제한 (활동의 자유)": ["승인", "허가", "할수 없다", "비준", "할 수 없다"],
-    "국가 통제/감독 (자율성 침해)": ["통제", "감독", "검열", "지도통제"],
-    "정보 통제 (표현/알 권리)": ["비밀", "차단", "격페", "류포금지", "시청", "복사"],
-    "인력 통제 (직업선택의 자유)": ["배치", "이동", "내보내", "뽑아", "옮기려"],
-}
+async def _generate_research_plan(query: str) -> dict:
+    """LLM에게 연구 계획을 요청. 어떤 질문이든 동적으로 전략 수립.
+
+    Returns: {
+        "pre_read": ["사회주의헌법"],  # 먼저 읽어야 할 법령
+        "semantic_queries": ["...", "..."],  # 시맨틱 검색 쿼리 목록
+        "keyword_patterns": ["...", "..."],  # 키워드 검색 패턴
+        "related_law_search": ["형법", "행정처벌법"],  # 추가 탐색할 법
+        "result_structure": "헌법 조항별 대조"  # 결과 정리 방식
+    }
+    """
+    import google.genai as genai_plan
+    from google.genai import types
+
+    prompt = f"""당신은 북한법 연구 조수입니다. 아래 연구 질문에 답하기 위한 검색 계획을 JSON으로 작성하세요.
+
+연구 질문: {query}
+
+사용 가능한 데이터:
+- 310개 북한 법령 전문 (DB에 저장됨)
+- Qdrant 벡터 검색 (시맨틱 유사도)
+- 키워드 ILIKE 검색
+- 남한법 조회 (법제처 API)
+
+다음 JSON 형식으로 응답하세요 (JSON만 출력, 다른 텍스트 없이):
+{{
+  "pre_read": ["먼저 읽어야 할 법령명 목록 (예: 비교 기준이 되는 법)"],
+  "semantic_queries": ["시맨틱 검색 쿼리 5~8개 (다양한 각도)"],
+  "keyword_patterns": ["조문 내용 키워드 검색 패턴 5~8개"],
+  "related_law_search": ["형법이나 행정처벌법 등 추가 탐색할 법 유형"],
+  "result_structure": "결과 정리 방식 (예: 카테고리별, 헌법 조항별 대조, 절차순)"
+}}"""
+
+    try:
+        client = genai_plan.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+        response = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+        import json as json_mod
+        plan = json_mod.loads(response.text)
+        logger.info(f"Research plan generated: {list(plan.keys())}")
+        return plan
+    except Exception as e:
+        logger.warning(f"Research plan generation failed: {e}")
+        # 폴백: 기본 계획
+        nouns = _extract_nouns(query)
+        return {
+            "pre_read": [],
+            "semantic_queries": [query] + [" ".join(nouns[i:i+3]) for i in range(0, len(nouns), 2)][:4],
+            "keyword_patterns": ["처벌", "금지", "승인", "통제", "의무"],
+            "related_law_search": ["형법", "행정처벌법"],
+            "result_structure": "카테고리별",
+        }
 
 
 async def deep_search(query: str, topic: str = "") -> str:
-    """복합 심층 검색 — 시맨틱 + 키워드 + 관련법 자동 확장으로 포괄적으로 조사합니다.
-    단순 검색이 아닌 연구 수준의 조사가 필요할 때 사용하세요.
+    """AI 기반 심층 연구 — LLM이 연구 계획을 동적으로 수립하고 실행합니다.
 
-    내부적으로:
-    1. 주제 영역 법령 특정
-    2. 다각도 시맨틱 검색 (3~5회 병렬)
-    3. 발견된 법령에서 키워드 보충 검색
-    4. 형법/행정처벌법 관련 조문 추가
-    5. 카테고리별 자동 분류
+    하드코딩된 전략 없이, 질문의 성격에 따라 자동으로:
+    - 먼저 읽어야 할 법령 파악 (예: 헌법 대조 시 헌법 먼저)
+    - 다각도 시맨틱 검색 쿼리 생성
+    - 키워드 검색 패턴 결정
+    - 관련법 자동 확장
+    - 결과 정리 구조 결정
 
     Args:
-        query: 조사 주제. 예: '과학기술 법령의 기본권 침해 요소', '노동법의 처벌 규정'
-        topic: 주제 영역 힌트 (선택). 예: '과학', '노동', '투자'. 비우면 자동 감지
+        query: 연구 질문. 어떤 유형이든 가능.
+        topic: 주제 힌트 (선택). 비우면 자동 감지.
 
     Returns:
-        카테고리별로 분류된 포괄적 조사 결과
+        구조화된 포괄적 조사 결과
     """
     try:
-        # 0. 주제 감지
-        if not topic:
-            nouns = _extract_nouns(query)
-            for kw in ["과학", "기술", "정보", "소프트", "쏘프트", "콤퓨터", "발명", "특허"]:
-                if any(kw in n for n in nouns) or kw in query:
-                    topic = "과학"
-                    break
-            if not topic:
-                for kw in ["노동", "근로", "로동"]:
-                    if kw in query:
-                        topic = "노동"
-                        break
-            if not topic:
-                for kw in ["투자", "외국인", "경제"]:
-                    if kw in query:
-                        topic = "투자"
-                        break
-            if not topic:
-                topic = "default"
+        # ── Step 1: LLM이 연구 계획 수립 ──
+        plan = await _generate_research_plan(query)
+        logger.info(f"Research plan: pre_read={plan.get('pre_read')}, "
+                     f"semantic={len(plan.get('semantic_queries',[]))} queries, "
+                     f"keywords={len(plan.get('keyword_patterns',[]))}")
 
-        # 1. 주제 관련 법령 특정
         factory = get_session_factory()
-        async with factory() as session:
-            topic_kw = {"과학": "%과학%", "노동": "%로동%", "투자": "%투자%", "환경": "%환경%"}
-            like_pattern = topic_kw.get(topic, f"%{topic}%")
+        all_articles: dict[str, dict] = {}
 
-            r = await session.execute(text(
-                """SELECT id, name FROM laws
-                WHERE name ILIKE :p1 OR name ILIKE '%기술%'
-                OR name ILIKE '%정보%' OR name ILIKE '%쏘프트%'
-                OR name ILIKE '%콤퓨터%' OR name ILIKE '%발명%'"""
-                if topic == "과학" else
-                """SELECT id, name FROM laws WHERE name ILIKE :p1"""
-            ), {"p1": like_pattern})
-            scoped_laws = {row["id"]: row["name"] for row in r.mappings().all()}
+        # ── Step 2: 선행 읽기 (pre_read) ──
+        pre_read_content = {}
+        if plan.get("pre_read"):
+            from app.repositories.law_repo import LawRepository
+            async with factory() as session:
+                repo = LawRepository(session)
+                for law_name in plan["pre_read"][:3]:
+                    law = await repo.get_by_name(law_name)
+                    if law:
+                        articles = await repo.get_articles(law["id"])
+                        pre_read_content[law_name] = articles
+                        # 선행 읽기 결과도 all_articles에 포함
+                        for a in articles:
+                            key = f"{law_name}_제{a['article_number']}조"
+                            all_articles[key] = {**a, "law_name": law_name}
 
-        scoped_ids = list(scoped_laws.keys())
-        scoped_names = list(scoped_laws.values())
-
-        # 2. 다각도 시맨틱 검색 (병렬)
-        angles = _TOPIC_SEARCH_ANGLES.get(topic, _TOPIC_SEARCH_ANGLES["default"])
-        angles = [query] + angles  # 원본 쿼리도 포함
+        # ── Step 3: 시맨틱 검색 (LLM 생성 쿼리) ──
+        semantic_queries = plan.get("semantic_queries", [query])
+        if query not in semantic_queries:
+            semantic_queries = [query] + semantic_queries
 
         import google.genai as genai_embed
-        embed_client = genai_embed.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
         from app.core.config import get_config
         from app.core.database import get_qdrant
         from app.repositories.qdrant_search import QdrantSearchRepository
 
         cfg = get_config()
-        model = cfg.get("embedding", {}).get("model", "gemini-embedding-001")
+        embed_model = cfg.get("embedding", {}).get("model", "gemini-embedding-001")
         collection = cfg.get("qdrant", {}).get("collection", "legalize_kp_laws")
+        embed_client = genai_embed.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
         qdrant_repo = QdrantSearchRepository(get_qdrant(), collection)
 
-        all_articles: dict[str, dict] = {}  # key → article
-
-        # 시맨틱 검색 (순차 — embedding API rate limit 고려)
-        for angle in angles[:5]:
+        for sq in semantic_queries[:6]:
             try:
-                resp = embed_client.models.embed_content(model=model, contents=angle)
+                resp = embed_client.models.embed_content(model=embed_model, contents=sq)
                 vector = resp.embeddings[0].values
                 hits = qdrant_repo.search(vector, limit=10)
                 for h in hits:
@@ -446,82 +450,94 @@ async def deep_search(query: str, topic: str = "") -> str:
                     if key not in all_articles:
                         all_articles[key] = h
             except Exception as e:
-                logger.warning(f"Semantic search failed for '{angle[:30]}': {e}")
+                logger.warning(f"Semantic search failed: {e}")
 
-        # 3. 키워드 보충 검색 (주제 법령에서)
-        kw_patterns = ["처벌", "금지", "할수 없다", "승인을 받", "의무적", "통제", "감독", "몰수"]
-        async with factory() as session:
-            for p in kw_patterns:
-                try:
-                    r = await session.execute(text(
-                        """SELECT a.article_number, a.article_title, a.content, l.name as law_name
-                        FROM articles a JOIN laws l ON a.law_id = l.id
-                        WHERE a.law_id = ANY(:ids)
-                        AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
-                        ORDER BY l.name, a.position LIMIT 10"""
-                    ), {"ids": scoped_ids, "kw": f"%{p}%"})
-                    for row in r.mappings().all():
-                        key = f"{row['law_name']}_제{row['article_number']}조"
-                        if key not in all_articles:
-                            all_articles[key] = dict(row)
-                except Exception:
-                    pass
+        # ── Step 4: 키워드 검색 (LLM 생성 패턴) ──
+        kw_patterns = plan.get("keyword_patterns", [])
+        if kw_patterns:
+            async with factory() as session:
+                for p in kw_patterns[:8]:
+                    try:
+                        r = await session.execute(text(
+                            """SELECT a.article_number, a.article_title, a.content, l.name as law_name
+                            FROM articles a JOIN laws l ON a.law_id = l.id
+                            AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
+                            ORDER BY l.name, a.position LIMIT 8"""
+                        ), {"kw": f"%{p}%"})
+                        for row in r.mappings().all():
+                            key = f"{row['law_name']}_제{row['article_number']}조"
+                            if key not in all_articles:
+                                all_articles[key] = dict(row)
+                    except Exception:
+                        pass
 
-            # 4. 형법/행정처벌법 관련 조문 추가
-            topic_terms = {"과학": ["과학", "기술", "정보", "쏘프트"], "노동": ["로동", "근로"], "투자": ["투자", "외국인"]}
-            terms = topic_terms.get(topic, [topic])
-            for term in terms:
-                try:
-                    r = await session.execute(text(
-                        """SELECT a.article_number, a.article_title, a.content, l.name as law_name
-                        FROM articles a JOIN laws l ON a.law_id = l.id
-                        WHERE l.name IN ('형법', '행정처벌법')
-                        AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
-                        ORDER BY l.name, a.position LIMIT 10"""
-                    ), {"kw": f"%{term}%"})
-                    for row in r.mappings().all():
-                        key = f"{row['law_name']}_제{row['article_number']}조"
-                        if key not in all_articles:
-                            all_articles[key] = dict(row)
-                except Exception:
-                    pass
+        # ── Step 5: 관련법 추가 탐색 ──
+        related_laws = plan.get("related_law_search", [])
+        if related_laws:
+            # 질문에서 핵심 명사 추출하여 관련법에서 검색
+            nouns = _extract_nouns(query)
+            search_terms = [n for n in nouns if len(n) >= 2][:5]
+            async with factory() as session:
+                for law_name in related_laws[:3]:
+                    for term in search_terms:
+                        try:
+                            r = await session.execute(text(
+                                """SELECT a.article_number, a.article_title, a.content, l.name as law_name
+                                FROM articles a JOIN laws l ON a.law_id = l.id
+                                WHERE l.name = :ln
+                                AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
+                                ORDER BY a.position LIMIT 5"""
+                            ), {"ln": law_name, "kw": f"%{term}%"})
+                            for row in r.mappings().all():
+                                key = f"{row['law_name']}_제{row['article_number']}조"
+                                if key not in all_articles:
+                                    all_articles[key] = dict(row)
+                        except Exception:
+                            pass
 
-        # 5. 카테고리별 분류
-        categorized: dict[str, list[str]] = {cat: [] for cat in _RIGHTS_CATEGORIES}
-        uncategorized: list[str] = []
+        # ── Step 6: 결과 조립 (LLM이 지정한 구조로) ──
+        result_structure = plan.get("result_structure", "카테고리별")
 
-        for key, art in all_articles.items():
-            content = art.get("content", art.get("content_snippet", ""))
+        # 법령별 그룹화
+        by_law: dict[str, list[dict]] = {}
+        for art in all_articles.values():
             name = art.get("law_name", "")
-            num = art.get("article_number", "")
-            title = art.get("article_title", "")
-            preview = content[:150] + "..." if len(content) > 150 else content
-            entry = f"**{name} 제{num}조 {title}**: {preview}"
+            by_law.setdefault(name, []).append(art)
 
-            matched = False
-            for cat, keywords in _RIGHTS_CATEGORIES.items():
-                if any(kw in content for kw in keywords):
-                    if entry not in categorized[cat]:
-                        categorized[cat].append(entry)
-                    matched = True
-                    break
-            if not matched:
-                uncategorized.append(entry)
+        lines = [f"## 심층 조사 결과 ({len(all_articles)}개 조문, {len(by_law)}개 법령)\n"]
+        lines.append(f"연구 계획: {result_structure}")
+        lines.append(f"조사 대상: {', '.join(list(by_law.keys())[:10])}")
+        if len(by_law) > 10:
+            lines.append(f"  외 {len(by_law)-10}개 법령")
 
-        # 6. 결과 조립
-        total = sum(len(v) for v in categorized.values())
-        lines = [f"## 심층 조사 결과 ({len(all_articles)}개 조문 발견, {len(scoped_names)}개 법령 대상)\n"]
-        lines.append(f"조사 대상 법령: {', '.join(scoped_names[:10])}")
-        if len(scoped_names) > 10:
-            lines.append(f"  외 {len(scoped_names)-10}개")
+        # 선행 읽기 결과 포함
+        if pre_read_content:
+            for law_name, articles in pre_read_content.items():
+                lines.append(f"\n### [기준법] {law_name} ({len(articles)}조)")
+                for a in articles[:20]:
+                    num = a.get("article_number", "")
+                    title = a.get("article_title", "")
+                    content = a.get("content", "")
+                    if len(content) > 150:
+                        content = content[:150] + "..."
+                    lines.append(f"- **제{num}조 {title}**: {content}")
 
-        for cat, items in categorized.items():
-            if items:
-                lines.append(f"\n### {cat} ({len(items)}건)")
-                for item in items[:8]:  # 카테고리당 최대 8개
-                    lines.append(f"- {item}")
-                if len(items) > 8:
-                    lines.append(f"  ... 외 {len(items)-8}건")
+        # 나머지 발견 조문 (선행 읽기 법령 제외)
+        pre_read_names = set(pre_read_content.keys())
+        for law_name in sorted(by_law.keys()):
+            if law_name in pre_read_names:
+                continue
+            arts = sorted(by_law[law_name], key=lambda x: int(x.get("article_number", 0) or 0))
+            lines.append(f"\n### {law_name} ({len(arts)}개 조문)")
+            for a in arts[:6]:
+                num = a.get("article_number", "")
+                title = a.get("article_title", "")
+                content = a.get("content", a.get("content_snippet", ""))
+                if len(content) > 150:
+                    content = content[:150] + "..."
+                lines.append(f"- **제{num}조 {title}**: {content}")
+            if len(arts) > 6:
+                lines.append(f"  ... 외 {len(arts)-6}건")
 
         result = "\n".join(lines)
         if len(result) > 8000:
