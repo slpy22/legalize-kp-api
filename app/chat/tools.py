@@ -12,19 +12,24 @@ SYSTEM_PROMPT = """당신은 북한법 전문 AI 연구 보조원입니다. 310�
 
 ## 핵심 원칙
 - **절대로 추측하지 마세요.** 모든 답변은 반드시 도구를 사용하여 실제 법령 조문을 조회한 후 작성하세요.
-- "접근할 수 없다", "확인이 어렵다" 같은 말은 하지 마세요. 당신은 도구로 법령을 직접 조회할 수 있습니다.
+- "접근할 수 없다", "확인이 어렵다", "제한적이다" 같은 말은 절대 하지 마세요. 당신은 310개 북한 법령의 모든 조문을 직접 조회할 수 있습니다.
 - 일반 지식이나 추론으로 답변하지 말고, 반드시 실제 조문을 인용하세요.
+- **기본권 제한, 처벌, 통제 관련 질문**에는 반드시 search_articles를 사용하여 "금지", "처벌", "의무", "승인", "통제" 키워드로 조문을 직접 검색하세요.
 
 ## 도구 사용 전략
 1. **search_laws**: 관련 법령을 먼저 검색합니다. 쿼리는 남한어로 입력하세요 (자동 문화어 변환됨).
 2. **get_article**: 찾은 법령의 조문을 조회합니다.
    - article 파라미터 없이 호출하면 해당 법령의 전체 조문 목록을 가져옵니다.
    - 특정 조문만 보려면 "제1조" 형식으로 지정하세요.
-3. **복잡한 질문 처리법**: 여러 법령을 조사해야 하는 질문에는:
-   - 먼저 search_laws로 관련 법령들을 찾고
-   - 각 법령의 조문을 get_article로 조회하여
-   - 실제 조문 내용을 근거로 분석 답변을 작성하세요.
-   - 한 번에 모든 것을 찾으려 하지 말고, 여러 번 도구를 호출하세요.
+3. **search_articles**: 조문 내용을 키워드로 직접 검색합니다.
+   - "금지", "처벌", "의무", "통제", "승인" 등의 키워드로 관련 조항을 바로 찾을 수 있습니다.
+   - law_name을 지정하면 특정 법령 내에서만 검색합니다.
+   - 예: search_articles(query="금지", law_name="과학기술법")
+4. **복잡한 분석 질문 처리법**:
+   - "기본권 제한", "처벌 조항" 같은 분석적 질문에는 search_articles를 적극 활용하세요.
+   - 예: "금지", "처벌", "의무", "승인", "통제" 등의 키워드로 여러 번 검색
+   - 찾은 조문의 전문이 필요하면 get_article로 추가 조회
+   - 여러 번 도구를 호출해서 충분한 근거를 확보한 후 답변하세요.
 
 ## 답변 형식
 - 마크다운으로 작성 (깔끔하게, 불필요한 따옴표 없이)
@@ -55,6 +60,18 @@ TOOL_DECLARATIONS = [
         },
     },
     {
+        "name": "search_articles",
+        "description": "법령 조문 내용을 키워드로 직접 검색합니다. 특정 주제(예: '금지', '처벌', '의무', '통제', '승인')가 포함된 조항을 찾을 때 사용하세요. law_name을 지정하면 해당 법령 내에서만 검색합니다.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "조문 내용 검색어. 예: '금지', '처벌', '국가 승인', '의무'"},
+                "law_name": {"type": "string", "description": "특정 법령 내에서만 검색 (선택). 예: '과학기술법'"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "compare_laws",
         "description": "북한법과 대응하는 남한법을 비교합니다",
         "parameters": {
@@ -82,6 +99,8 @@ async def execute_tool(name: str, args: dict, session: AsyncSession) -> dict:
             return await _search_laws(args, session)
         elif name == "get_article":
             return await _get_article(args, session)
+        elif name == "search_articles":
+            return await _search_articles(args, session)
         elif name == "compare_laws":
             return await _compare_laws(args, session)
         elif name == "lookup_term":
@@ -174,6 +193,75 @@ async def _get_article(args: dict, session: AsyncSession) -> dict:
         lines.append(f"[{header}]\n{content}")
 
     return {"result": "\n\n".join(lines), "sources": sources}
+
+
+async def _search_articles(args: dict, session: AsyncSession) -> dict:
+    """조문 내용을 키워드로 직접 검색."""
+    query = args.get("query", "")
+    law_name = args.get("law_name")
+    expanded = expand_query(query)
+
+    # 단어 분리
+    words = expanded.split()
+    if not words:
+        return {"result": "검색어를 입력하세요.", "sources": []}
+
+    # ILIKE 조건: 모든 단어가 포함된 조문 (AND)
+    conditions = " AND ".join(
+        f"(a.content ILIKE :w{i} OR a.article_title ILIKE :w{i})" for i in range(len(words))
+    )
+    params: dict = {}
+    for i, w in enumerate(words):
+        params[f"w{i}"] = f"%{w}%"
+
+    law_filter = ""
+    if law_name:
+        law_filter = "AND l.name = :law_name"
+        params["law_name"] = law_name
+
+    sql = f"""
+        SELECT a.article_number, a.article_title, a.content, l.name as law_name
+        FROM articles a JOIN laws l ON a.law_id = l.id
+        WHERE ({conditions}) {law_filter}
+        ORDER BY l.name, a.position
+        LIMIT 20
+    """
+    result = await session.execute(text(sql), params)
+    rows = result.mappings().all()
+
+    if not rows:
+        # AND 실패 시 OR로 폴백
+        or_conditions = " OR ".join(
+            f"(a.content ILIKE :w{i} OR a.article_title ILIKE :w{i})" for i in range(len(words))
+        )
+        sql_or = f"""
+            SELECT a.article_number, a.article_title, a.content, l.name as law_name
+            FROM articles a JOIN laws l ON a.law_id = l.id
+            WHERE ({or_conditions}) {law_filter}
+            ORDER BY l.name, a.position
+            LIMIT 20
+        """
+        result = await session.execute(text(sql_or), params)
+        rows = result.mappings().all()
+
+    if not rows:
+        return {"result": f"'{query}'가 포함된 조문을 찾을 수 없습니다.", "sources": []}
+
+    sources = []
+    lines = []
+    for r in rows:
+        lname = r["law_name"]
+        num = r["article_number"]
+        title = r.get("article_title", "")
+        content = r["content"]
+        if len(content) > 200:
+            content = content[:200] + "..."
+        header = f"{lname} 제{num}조 {title}".strip()
+        lines.append(f"[{header}]\n{content}")
+        sources.append({"law_name": lname, "article": str(num)})
+
+    result_text = f"조문 검색 결과 ({len(rows)}건):\n\n" + "\n\n".join(lines)
+    return {"result": result_text, "sources": sources}
 
 
 async def _compare_laws(args: dict, session: AsyncSession) -> dict:
