@@ -83,9 +83,35 @@ async def execute_tool(name: str, args: dict, session: AsyncSession) -> dict:
 
 async def _search_laws(args: dict, session: AsyncSession) -> dict:
     query = args.get("query", "")
-    expanded = expand_query(query)
     repo = PgSearchRepository(session)
-    rows, total = await repo.search_laws(expanded, limit=5)
+
+    # 1) 용어변환 적용 (남한어 → 북한어)
+    expanded = expand_query(query)
+
+    # 2) 변환된 단어들만 추출 (원본 제외)
+    converted_only = expanded.replace(query, "").strip() if expanded != query else ""
+
+    # 3) 검색 전략: 변환어 우선, 원본 보충
+    rows = []
+    seen_ids: set = set()
+
+    # 변환어로 먼저 검색 (예: "쏘프트웨어 보호")
+    if converted_only:
+        r1, _ = await repo.search_laws(converted_only, limit=5)
+        for r in r1:
+            if r.get("id") not in seen_ids:
+                rows.append(r)
+                seen_ids.add(r.get("id"))
+
+    # 원본으로 보충 검색
+    r2, _ = await repo.search_laws(query, limit=5)
+    for r in r2:
+        if r.get("id") not in seen_ids:
+            rows.append(r)
+            seen_ids.add(r.get("id"))
+
+    total = len(rows)
+    rows = rows[:5]
 
     sources = []
     lines = []

@@ -66,6 +66,13 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
 
                         yield _sse("tool_call", {"name": tool_name, "args": tool_args})
 
+                        # assistant의 function_call 메시지를 이력에 추가
+                        messages.append({
+                            "role": "assistant",
+                            "content": "",
+                            "tool_call": {"name": tool_name, "args": tool_args},
+                        })
+
                         result = await execute_tool(tool_name, tool_args, session)
                         all_sources.extend(result.get("sources", []))
 

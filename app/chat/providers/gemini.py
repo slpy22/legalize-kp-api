@@ -47,7 +47,20 @@ class GeminiProvider:
             if role == "user":
                 contents.append(types.Content(role="user", parts=[types.Part.from_text(text=msg["content"])]))
             elif role == "assistant":
-                contents.append(types.Content(role="model", parts=[types.Part.from_text(text=msg["content"])]))
+                tc = msg.get("tool_call")
+                if tc:
+                    # assistant가 function_call을 한 경우
+                    contents.append(types.Content(
+                        role="model",
+                        parts=[types.Part.from_function_call(
+                            name=tc["name"],
+                            args=tc.get("args", {}),
+                        )],
+                    ))
+                else:
+                    text_content = msg.get("content", "")
+                    if text_content:
+                        contents.append(types.Content(role="model", parts=[types.Part.from_text(text=text_content)]))
             elif role == "tool":
                 tool_data = msg.get("tool_data", {})
                 contents.append(
@@ -93,7 +106,10 @@ class GeminiProvider:
 
             if not chunk.candidates:
                 continue
-            for part in chunk.candidates[0].content.parts:
+            candidate = chunk.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                continue
+            for part in candidate.content.parts:
                 if part.function_call:
                     fc = part.function_call
                     args = dict(fc.args) if fc.args else {}

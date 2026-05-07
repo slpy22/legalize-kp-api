@@ -19,9 +19,20 @@ class PgSearchRepository:
         Returns (rows, total_count) — rows are sliced by offset/limit after dedup.
         """
         # 단어별 ILIKE 조건 생성 (하나라도 포함되면 매칭 — OR)
+        # 단, 매칭된 단어 수에 따라 rank를 높여서 AND에 가까운 결과가 상위 노출
         words = query.split()
         like_conditions_name = " OR ".join(f"name ILIKE :w{i}" for i in range(len(words)))
         like_conditions_text = " OR ".join(f"full_text ILIKE :w{i}" for i in range(len(words)))
+
+        # 매칭된 단어 수 계산 (이름, 본문 각각)
+        name_match_count = " + ".join(
+            f"CASE WHEN name ILIKE :w{i} THEN 1 ELSE 0 END" for i in range(len(words))
+        )
+        text_match_count = " + ".join(
+            f"CASE WHEN full_text ILIKE :w{i} THEN 1 ELSE 0 END" for i in range(len(words))
+        )
+        word_count = max(len(words), 1)
+
         params: dict = {"query": query}
         for i, w in enumerate(words):
             params[f"w{i}"] = f"%{w}%"
@@ -42,16 +53,16 @@ class PgSearchRepository:
 
                 UNION
 
-                -- 2) 법령명 단어별 부분 매칭
-                SELECT *, 0.5 AS rank
+                -- 2) 법령명 단어별 부분 매칭 (매칭 단어 수 비례 rank)
+                SELECT *, (0.5 * ({name_match_count})::float / {word_count}) AS rank
                 FROM laws
                 WHERE {like_conditions_name or 'FALSE'}
                 {cat_filter}
 
                 UNION
 
-                -- 3) 본문 단어별 부분 매칭 (ILIKE)
-                SELECT *, 0.1 AS rank
+                -- 3) 본문 단어별 부분 매칭 (매칭 단어 수 비례 rank)
+                SELECT *, (0.1 * ({text_match_count})::float / {word_count}) AS rank
                 FROM laws
                 WHERE {like_conditions_text or 'FALSE'}
                 {cat_filter}
