@@ -60,9 +60,10 @@ class ClassifiedQuery:
 
 # 심층 분석용 키워드 매핑
 _ANALYSIS_KEYWORD_MAP = {
-    "기본권": ["금지", "의무", "처벌", "승인", "통제", "제한", "허가"],
-    "제한": ["금지", "의무", "처벌", "승인", "통제", "제한", "허가"],
-    "처벌": ["처벌", "벌금", "제재", "위반", "책임"],
+    "기본권": ["금지", "의무", "처벌", "승인", "통제", "제한", "허가", "몰수", "무보수로동", "로동교양", "박탈"],
+    "제한": ["금지", "의무", "처벌", "승인", "통제", "제한", "허가", "할수 없다"],
+    "침해": ["처벌", "금지", "의무", "통제", "감독", "승인", "제한", "몰수", "박탈", "할수 없다"],
+    "처벌": ["처벌", "벌금", "제재", "위반", "책임", "몰수", "무보수로동", "로동교양", "박탈"],
     "통제": ["통제", "감독", "검열", "승인", "허가", "금지"],
     "의무": ["의무", "하여야 한다", "보장", "책임"],
     "권리": ["권리", "보장", "보호", "자유"],
@@ -441,43 +442,85 @@ async def _strategy_multi_law(cq, pg, session, bundle, progress):
 
 
 async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
-    """심층 주제 분석 — 다단계 유연 검색.
+    """심층 주제 분석 — 주제 영역 특정 후 분석.
 
-    Phase 1: 넓게 — 쿼리 키워드로 전체 DB에서 관련 조문 발견
-    Phase 2: LLM 보조 확장 — Phase 1 결과에서 발견된 패턴/법령을 추가 탐색
+    Phase 0: 질문에서 주제 영역 법령을 특정 (예: "과학기술 관련" → 과학기술 법령 목록)
+    Phase 1: 특정된 법령에서 분석 키워드로 조문 검색
+    Phase 2: 구조적 패턴으로 추가 탐색
     Phase 3: 남한법 대응 (비교 필요 시)
     """
-    # ── Phase 1: 넓은 탐색 ──
-    await progress("1단계", "전체 법령에서 관련 조문 탐색")
+    # ── Phase 0: 주제 영역 법령 특정 ──
+    target_law_filter = cq.law_names[0] if cq.law_names else None
+    scoped_laws: list[str] | None = None  # None이면 전체 DB 검색
 
-    # 1-a. 분석 키워드 + 쿼리 핵심어로 조문 직접 검색
+    if not target_law_filter:
+        # 질문에서 주제 영역 키워드 추출
+        topic_keywords = []
+        topic_patterns = {
+            "과학기술": ["과학", "기술", "연구", "발명", "쏘프트웨어", "콤퓨터", "정보", "전산"],
+            "경제무역": ["경제", "무역", "투자", "기업", "상업", "가격"],
+            "노동": ["노동", "로동", "근로", "임금", "고용"],
+            "환경": ["환경", "오염", "자연", "보호", "생태"],
+            "교육": ["교육", "학교", "대학", "양성", "훈련"],
+        }
+        for topic, keywords in topic_patterns.items():
+            for kw in keywords:
+                if kw in cq.original:
+                    topic_keywords.extend(keywords)
+                    break
+
+        if topic_keywords:
+            # 주제 관련 법령 검색
+            await progress("0단계", "주제 관련 법령 특정")
+            topic_search = " ".join(list(set(topic_keywords))[:5])
+            laws, _ = await pg.search_laws(topic_search, limit=15)
+            if laws:
+                scoped_laws = [law.get("name", "") for law in laws]
+                await progress("0단계 결과", f"{len(scoped_laws)}개 관련 법령 특정")
+
+    # ── Phase 1: 분석 키워드로 조문 검색 ──
+    await progress("1단계", "관련 조문 탐색")
+
     search_terms = list(cq.analysis_keywords)
-    # 쿼리에서 의미 있는 키워드만 추출 (일반 불용어 + 분석 메타어 제외)
+    # 쿼리에서 의미 있는 키워드만 추출
     stopwords = {
         "관련", "법령", "조항", "있는", "경우", "대해", "어떤", "해석", "집행", "요소",
         "북한의", "북한", "남한", "법들이", "법들", "만한", "인간의", "인간",
         "찾아", "찾아줘", "알려줘", "보여줘", "해줘", "줘",
         "어떤", "어떻게", "필요", "되는", "하는", "할수", "하려면", "경우에",
-        "법적", "잘못", "잘못할",
+        "법적", "잘못", "잘못할", "중에서", "침해할",
     }
     for w in cq.original.split():
         cleaned = re.sub(r"[을를이가은는의에서도와과]$", "", w)
         if len(cleaned) >= 2 and cleaned not in stopwords and cleaned not in search_terms:
             search_terms.append(cleaned)
 
-    # 특정 법령 지정 시 해당 법령 우선, 아니면 전체 검색
-    target_law_filter = cq.law_names[0] if cq.law_names else None
-
-    # 각 키워드로 병렬 검색 (법령 제한 없이 또는 지정 법령 내)
-    phase1_tasks = []
-    for term in search_terms:
-        phase1_tasks.append(
+    # 특정 법령 또는 주제 영역 법령으로 범위 제한
+    if target_law_filter:
+        # 단일 법령 지정
+        phase1_tasks = [
             _search_articles_db(None, term, law_name=target_law_filter, limit=10)
-        )
+            for term in search_terms
+        ]
+    elif scoped_laws:
+        # 주제 영역 법령들 대상으로 검색
+        phase1_tasks = []
+        for law_name in scoped_laws:
+            for term in search_terms[:8]:  # 법령당 최대 8개 키워드
+                phase1_tasks.append(
+                    _search_articles_db(None, term, law_name=law_name, limit=5)
+                )
+    else:
+        # 범위 없음 — 전체 DB
+        phase1_tasks = [
+            _search_articles_db(None, term, limit=10)
+            for term in search_terms
+        ]
+
     phase1_results = await asyncio.gather(*phase1_tasks)
 
     # 결과 병합 + 중복 제거
-    all_articles: dict[str, dict] = {}  # "법령명_조문번호" → article
+    all_articles: dict[str, dict] = {}
     discovered_laws: set[str] = set()
     for articles in phase1_results:
         for a in articles:
@@ -537,14 +580,20 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
                 if key not in all_articles:
                     all_articles[key] = a
 
-    # ── 증거 조립 ──
+    # ── 증거 조립 — 주제 관련 법령 우선 정렬 ──
     by_law: dict[str, list[dict]] = {}
     for a in all_articles.values():
         law_name = a["law_name"]
         by_law.setdefault(law_name, []).append(a)
 
+    # 정렬: 주제 영역 법령 → 조문 수 많은 순 → 가나다
+    def _law_sort_key(name: str) -> tuple:
+        is_scoped = 0 if (scoped_laws and name in scoped_laws) else 1
+        art_count = -len(by_law.get(name, []))
+        return (is_scoped, art_count, name)
+
     lines = []
-    for law_name in sorted(by_law.keys()):
+    for law_name in sorted(by_law.keys(), key=_law_sort_key):
         arts = sorted(by_law[law_name], key=lambda x: int(x.get("article_number", 0) or 0))
         lines.append(f"## {law_name} ({len(arts)}개 조문)")
         for a in arts:
