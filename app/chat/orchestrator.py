@@ -368,120 +368,207 @@ async def _strategy_keyword_search(cq, pg, session, bundle, progress):
 
 
 async def _strategy_multi_law(cq, pg, session, bundle, progress):
-    """여러 법령 분석."""
+    """여러 법령 분석 — 법령 제한 없이 전체 탐색."""
     query = cq.expanded
     await progress("법령 검색", query)
 
-    laws, _ = await pg.search_laws(query, limit=8)
-    if not laws:
+    # 법령 검색 + 조문 직접 검색 병렬
+    laws_task = pg.search_laws(query, limit=10)
+    articles_task = _search_articles_db(None, query, limit=20)
+    (laws, _), direct_articles = await asyncio.gather(laws_task, articles_task)
+
+    # 법령 목록 + 조문에서 발견된 법령 병합
+    discovered_laws = {law.get("name", "") for law in laws}
+    for a in direct_articles:
+        discovered_laws.add(a["law_name"])
+
+    top_laws = list(discovered_laws)[:8]
+    if not top_laws:
         bundle.evidence_text = "관련 법령을 찾을 수 없습니다."
         return
 
-    top_laws = [law.get("name", "") for law in laws[:5]]
     await progress("조문 검색", f"{len(top_laws)}개 법령")
 
-    # 각 법령에서 관련 조문 병렬 검색
+    # 쿼리 키워드별로 각 법령에서 병렬 검색
+    kw_list = [w for w in cq.original.split() if len(w) >= 2][:5]
+    if not kw_list:
+        kw_list = [query]
+
     tasks = []
     for law_name in top_laws:
-        tasks.append(_search_articles_db(None, query, law_name=law_name, limit=5))
+        for kw in kw_list:
+            tasks.append(_search_articles_db(None, kw, law_name=law_name, limit=5))
 
     results = await asyncio.gather(*tasks)
+
+    all_articles: dict[str, dict] = {}
+    for articles in results:
+        for a in articles:
+            key = f"{a['law_name']}_제{a['article_number']}조"
+            if key not in all_articles:
+                all_articles[key] = a
+
+    # 직접 검색 결과도 병합
+    for a in direct_articles:
+        key = f"{a['law_name']}_제{a['article_number']}조"
+        if key not in all_articles:
+            all_articles[key] = a
+
+    by_law: dict[str, list[dict]] = {}
+    for a in all_articles.values():
+        by_law.setdefault(a["law_name"], []).append(a)
+
     lines = []
-    for law_name, articles in zip(top_laws, results):
-        if articles:
-            lines.append(f"## {law_name}")
-            for a in articles:
-                num = a["article_number"]
-                title = a.get("article_title", "")
-                content = a["content"]
-                if len(content) > 200:
-                    content = content[:200] + "..."
-                lines.append(f"**제{num}조 {title}**: {content}")
-                bundle.sources.append({"law_name": law_name, "article": str(num)})
+    for law_name in sorted(by_law.keys()):
+        arts = sorted(by_law[law_name], key=lambda x: int(x.get("article_number", 0) or 0))
+        lines.append(f"## {law_name} ({len(arts)}개 조문)")
+        for a in arts[:8]:
+            num = a["article_number"]
+            title = a.get("article_title", "")
+            content = a["content"]
+            if len(content) > 200:
+                content = content[:200] + "..."
+            lines.append(f"**제{num}조 {title}**: {content}")
+            bundle.sources.append({"law_name": law_name, "article": str(num)})
 
     bundle.evidence_text = "\n\n".join(lines) if lines else "관련 조문을 찾을 수 없습니다."
 
 
 async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
-    """심층 주제 분석 — 핵심: 여러 키워드로 병렬 검색."""
-    # 대상 법령 결정
-    if cq.law_names:
-        target_laws = cq.law_names
-    else:
-        # 쿼리에서 법령 검색
-        await progress("법령 검색", cq.expanded)
-        laws, _ = await pg.search_laws(cq.expanded, limit=5)
-        target_laws = [law.get("name", "") for law in laws[:3]]
+    """심층 주제 분석 — 다단계 유연 검색.
 
-    if not target_laws:
-        bundle.evidence_text = "관련 법령을 찾을 수 없습니다."
-        return
+    Phase 1: 넓게 — 쿼리 키워드로 전체 DB에서 관련 조문 발견
+    Phase 2: LLM 보조 확장 — Phase 1 결과에서 발견된 패턴/법령을 추가 탐색
+    Phase 3: 남한법 대응 (비교 필요 시)
+    """
+    # ── Phase 1: 넓은 탐색 ──
+    await progress("1단계", "전체 법령에서 관련 조문 탐색")
 
-    await progress("심층 분석", f"{len(target_laws)}개 법령 × {len(cq.analysis_keywords)}개 키워드")
+    # 1-a. 사용자 키워드 + 분석 키워드로 조문 직접 검색 (법령 제한 없이)
+    search_terms = list(cq.analysis_keywords)
+    # 쿼리에서 추가 키워드 추출 (2글자 이상, 불용어 제외)
+    stopwords = {"관련", "법령", "조항", "있는", "경우", "대해", "어떤", "해석", "집행", "요소"}
+    for w in cq.original.split():
+        if len(w) >= 2 and w not in stopwords:
+            if w not in search_terms:
+                search_terms.append(w)
 
-    # 모든 (법령, 키워드) 조합으로 병렬 검색
-    tasks = []
-    task_meta = []  # (law_name, keyword) tracking
-    for law_name in target_laws:
-        for kw in cq.analysis_keywords:
-            tasks.append(_search_articles_db(None, kw, law_name=law_name, limit=5))
-            task_meta.append((law_name, kw))
+    # 특정 법령 지정 시 해당 법령 우선, 아니면 전체 검색
+    target_law_filter = cq.law_names[0] if cq.law_names else None
 
-    results = await asyncio.gather(*tasks)
+    # 각 키워드로 병렬 검색 (법령 제한 없이 또는 지정 법령 내)
+    phase1_tasks = []
+    for term in search_terms:
+        phase1_tasks.append(
+            _search_articles_db(None, term, law_name=target_law_filter, limit=10)
+        )
+    phase1_results = await asyncio.gather(*phase1_tasks)
 
-    # 결과 병합 (법령별 → 중복 제거)
-    by_law: dict[str, dict[str, dict]] = {}  # law -> article_key -> article
-    for (law_name, kw), articles in zip(task_meta, results):
-        if not articles:
-            continue
-        if law_name not in by_law:
-            by_law[law_name] = {}
+    # 결과 병합 + 중복 제거
+    all_articles: dict[str, dict] = {}  # "법령명_조문번호" → article
+    discovered_laws: set[str] = set()
+    for articles in phase1_results:
         for a in articles:
-            key = f"{a['article_number']}"
-            if key not in by_law[law_name]:
-                by_law[law_name][key] = a
+            key = f"{a['law_name']}_제{a['article_number']}조"
+            if key not in all_articles:
+                all_articles[key] = a
+                discovered_laws.add(a["law_name"])
+
+    await progress("1단계 결과", f"{len(all_articles)}개 조문, {len(discovered_laws)}개 법령 발견")
+
+    # ── Phase 2: 발견된 법령에서 구조적 패턴 탐색 ──
+    if discovered_laws and not target_law_filter:
+        await progress("2단계", f"발견된 {len(discovered_laws)}개 법령 심층 탐색")
+
+        # 법률 텍스트에서 자주 나타나는 구조적 패턴으로 추가 검색
+        structural_patterns = [
+            "처벌을 준다", "할수 없다", "할 수 없다",
+            "승인을 받", "허가를 받", "합의를 받",
+            "의무적으로", "하여야 한다",
+            "몰수한다", "중지시킨다", "금지",
+        ]
+        phase2_tasks = []
+        for law_name in list(discovered_laws)[:8]:  # 발견된 법령들 중 최대 8개
+            for pattern in structural_patterns:
+                phase2_tasks.append(
+                    _search_articles_db(None, pattern, law_name=law_name, limit=5)
+                )
+
+        if phase2_tasks:
+            phase2_results = await asyncio.gather(*phase2_tasks)
+            for articles in phase2_results:
+                for a in articles:
+                    key = f"{a['law_name']}_제{a['article_number']}조"
+                    if key not in all_articles:
+                        all_articles[key] = a
+
+        await progress("2단계 결과", f"총 {len(all_articles)}개 조문 수집")
+
+    # 특정 법령 지정 시 Phase 2도 해당 법령 내에서 수행
+    elif target_law_filter:
+        await progress("2단계", f"{target_law_filter} 구조적 패턴 탐색")
+        structural_patterns = [
+            "처벌을 준다", "할수 없다", "승인을 받",
+            "의무적으로", "몰수", "중지", "금지",
+        ]
+        phase2_tasks = [
+            _search_articles_db(None, p, law_name=target_law_filter, limit=5)
+            for p in structural_patterns
+        ]
+        phase2_results = await asyncio.gather(*phase2_tasks)
+        for articles in phase2_results:
+            for a in articles:
+                key = f"{a['law_name']}_제{a['article_number']}조"
+                if key not in all_articles:
+                    all_articles[key] = a
+
+    # ── 증거 조립 ──
+    by_law: dict[str, list[dict]] = {}
+    for a in all_articles.values():
+        law_name = a["law_name"]
+        by_law.setdefault(law_name, []).append(a)
 
     lines = []
-    for law_name, articles_map in by_law.items():
-        sorted_arts = sorted(articles_map.values(), key=lambda x: int(x.get("article_number", 0) or 0))
-        if sorted_arts:
-            lines.append(f"## {law_name} ({len(sorted_arts)}개 조문)")
-            for a in sorted_arts:
-                num = a["article_number"]
-                title = a.get("article_title", "")
-                content = a["content"]
-                if len(content) > 300:
-                    content = content[:300] + "..."
-                lines.append(f"### 제{num}조 {title}\n{content}")
-                bundle.sources.append({"law_name": law_name, "article": str(num)})
+    for law_name in sorted(by_law.keys()):
+        arts = sorted(by_law[law_name], key=lambda x: int(x.get("article_number", 0) or 0))
+        lines.append(f"## {law_name} ({len(arts)}개 조문)")
+        for a in arts:
+            num = a["article_number"]
+            title = a.get("article_title", "")
+            content = a["content"]
+            if len(content) > 300:
+                content = content[:300] + "..."
+            lines.append(f"### 제{num}조 {title}\n{content}")
+            bundle.sources.append({"law_name": law_name, "article": str(num)})
 
-    # 분석 템플릿 매칭 → 남한법 비교 필요 시 추가 조회
+    # ── Phase 3: 남한법 대응 (비교 필요 시) ──
     template = _match_analysis_template(cq.original)
-    if template and template.get("requires_kr_law") and target_laws:
-        from app.compare.beopmang_client import KrLawClient
-        # 첫 번째 법령의 매핑된 남한법 조회
-        mapping = await get_mapping(session, target_laws[0])
-        kr_names = mapping.get("kr_names", []) if "error" not in mapping else []
-        if kr_names:
-            kr_name = kr_names[0]
-            await progress("남한법 조회", kr_name)
-            client = KrLawClient()
-            try:
-                kr_articles = await client.get_article_by_number(kr_name)
-                if kr_articles:
-                    lines.append(f"\n## 남한 대응법: {kr_name} ({len(kr_articles)}조)")
-                    for a in kr_articles[:10]:
-                        num = a.get("article_number", "")
-                        title = a.get("article_title", "")
-                        content = a.get("content", "")
-                        if len(content) > 200:
-                            content = content[:200] + "..."
-                        lines.append(f"**{num} {title}**: {content}")
-                        bundle.sources.append({"law_name": kr_name, "article": num})
-            except Exception:
-                lines.append(f"\n남한법 '{kr_name}' 조회 불가")
-            finally:
-                await client.close()
+    if template and template.get("requires_kr_law"):
+        primary_law = cq.law_names[0] if cq.law_names else (list(discovered_laws)[0] if discovered_laws else "")
+        if primary_law:
+            from app.compare.beopmang_client import KrLawClient
+            mapping = await get_mapping(session, primary_law)
+            kr_names = mapping.get("kr_names", []) if "error" not in mapping else []
+            if kr_names:
+                kr_name = kr_names[0]
+                await progress("남한법 조회", kr_name)
+                client = KrLawClient()
+                try:
+                    kr_articles = await client.get_article_by_number(kr_name)
+                    if kr_articles:
+                        lines.append(f"\n## 남한 대응법: {kr_name} ({len(kr_articles)}조)")
+                        for a in kr_articles[:10]:
+                            num = a.get("article_number", "")
+                            title = a.get("article_title", "")
+                            content = a.get("content", "")
+                            if len(content) > 200:
+                                content = content[:200] + "..."
+                            lines.append(f"**{num} {title}**: {content}")
+                            bundle.sources.append({"law_name": kr_name, "article": num})
+                except Exception:
+                    lines.append(f"\n남한법 '{kr_name}' 조회 불가")
+                finally:
+                    await client.close()
 
     # 분석 프레임워크 주입
     if template and template.get("analysis_framework"):
