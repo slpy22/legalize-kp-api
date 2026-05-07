@@ -8,37 +8,48 @@ from app.repositories.pg_search import PgSearchRepository
 from app.compare.mapping_service import get_mapping
 from app.chat.term_converter import expand_query
 
-SYSTEM_PROMPT = """당신은 북한법 전문 AI 연구 보조원입니다.
+SYSTEM_PROMPT = """당신은 북한법 전문 AI 연구 보조원입니다. 310개의 북한 법령 데이터베이스에 접근할 수 있습니다.
 
-규칙:
-1. 모든 답변에 반드시 출처(법령명, 조문번호)를 인용하세요.
-2. 조문 내용을 정확히 인용하되, 사용자가 이해하기 쉽게 설명을 추가하세요.
-3. 불확실한 내용은 "확인이 필요합니다"라고 명시하세요.
-4. 남북법 비교 시 양쪽 법령을 모두 인용하세요.
-5. 한국어로 답변하세요.
-6. 반드시 도구를 사용하여 정확한 법령 정보를 조회한 후 답변하세요.
-7. search_laws 도구 사용 시 쿼리는 남한어로 입력하세요 (시스템이 자동으로 북한 문화어로 변환합니다). 예: "소프트웨어 보호", "컴퓨터 네트워크", "노동법"
-8. 검색 결과가 없으면 다른 키워드로 재검색하세요. 예: "소프트웨어 저작권" 대신 "소프트웨어 보호"
-9. 답변은 마크다운 형식으로 하되, 불필요한 따옴표나 인용부호 없이 깔끔하게 작성하세요."""
+## 핵심 원칙
+- **절대로 추측하지 마세요.** 모든 답변은 반드시 도구를 사용하여 실제 법령 조문을 조회한 후 작성하세요.
+- "접근할 수 없다", "확인이 어렵다" 같은 말은 하지 마세요. 당신은 도구로 법령을 직접 조회할 수 있습니다.
+- 일반 지식이나 추론으로 답변하지 말고, 반드시 실제 조문을 인용하세요.
+
+## 도구 사용 전략
+1. **search_laws**: 관련 법령을 먼저 검색합니다. 쿼리는 남한어로 입력하세요 (자동 문화어 변환됨).
+2. **get_article**: 찾은 법령의 조문을 조회합니다.
+   - article 파라미터 없이 호출하면 해당 법령의 전체 조문 목록을 가져옵니다.
+   - 특정 조문만 보려면 "제1조" 형식으로 지정하세요.
+3. **복잡한 질문 처리법**: 여러 법령을 조사해야 하는 질문에는:
+   - 먼저 search_laws로 관련 법령들을 찾고
+   - 각 법령의 조문을 get_article로 조회하여
+   - 실제 조문 내용을 근거로 분석 답변을 작성하세요.
+   - 한 번에 모든 것을 찾으려 하지 말고, 여러 번 도구를 호출하세요.
+
+## 답변 형식
+- 마크다운으로 작성 (깔끔하게, 불필요한 따옴표 없이)
+- 모든 주장에 출처(법령명, 조문번호) 필수 인용
+- 조문 원문을 인용하고, 사용자가 이해하기 쉽게 설명 추가
+- 한국어로 답변"""
 
 TOOL_DECLARATIONS = [
     {
         "name": "search_laws",
-        "description": "북한 법령을 검색합니다",
+        "description": "북한 법령 데이터베이스(310개)에서 키워드로 법령을 검색합니다. 남한어로 입력하면 자동으로 북한 문화어로도 검색됩니다.",
         "parameters": {
             "type": "object",
-            "properties": {"query": {"type": "string"}},
+            "properties": {"query": {"type": "string", "description": "검색어 (남한어 가능). 예: '과학기술', '소프트웨어 보호', '정보통신'"}},
             "required": ["query"],
         },
     },
     {
         "name": "get_article",
-        "description": "특정 법령의 조문을 조회합니다",
+        "description": "특정 법령의 조문 내용을 조회합니다. article을 생략하면 전체 조문 목록을 반환합니다. 법령 내용을 직접 읽어야 할 때 사용하세요.",
         "parameters": {
             "type": "object",
             "properties": {
-                "law_name": {"type": "string"},
-                "article": {"type": "string", "description": "조문번호 예: 제1조"},
+                "law_name": {"type": "string", "description": "법령명 (정확한 이름). 예: '과학기술법'"},
+                "article": {"type": "string", "description": "조문번호. 예: '제1조'. 생략하면 전체 조문 반환"},
             },
             "required": ["law_name"],
         },
@@ -150,11 +161,16 @@ async def _get_article(args: dict, session: AsyncSession) -> dict:
 
     sources = [{"law_name": law_name, "article": a.get("article_number", "")} for a in articles]
     lines = []
-    for a in articles[:10]:
+    # 특정 조문 지정 시 전문 반환, 전체 조회 시 요약
+    max_articles = 10 if article else 30
+    for a in articles[:max_articles]:
         num = a.get("article_number", "")
         title = a.get("article_title", "")
         content = a.get("content", "")
         header = f"{num} {title}".strip()
+        # 전체 조회 시 200자로 요약, 특정 조문은 전문
+        if not article and len(content) > 200:
+            content = content[:200] + "..."
         lines.append(f"[{header}]\n{content}")
 
     return {"result": "\n\n".join(lines), "sources": sources}

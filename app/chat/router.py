@@ -78,9 +78,13 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
 
                         yield _sse("tool_result", {"name": tool_name, "result": result["result"][:500]})
 
+                        # tool result를 3000자로 제한 (Gemini context 절약)
+                        tool_content = result["result"]
+                        if len(tool_content) > 3000:
+                            tool_content = tool_content[:3000] + "\n...(이하 생략)"
                         messages.append({
                             "role": "tool",
-                            "content": result["result"],
+                            "content": tool_content,
                             "tool_data": {"name": tool_name},
                         })
                         break
