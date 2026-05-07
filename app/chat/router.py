@@ -39,8 +39,8 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
             sid, messages = chat_session.get_or_create(session_id)
             yield _sse("session", {"session_id": sid})
 
-            # 2. 쿼리 분류 (서버 결정론적)
-            cq = await classify_query(message, session)
+            # 2. 쿼리 분류 (서버 결정론적, 대화 이력 참고)
+            cq = await classify_query(message, session, history=messages)
             yield _sse("thinking", {"text": f"분석 유형: {cq.query_type}"})
 
             # 3. 검색 전략 실행 (서버 주도, 병렬)
@@ -92,7 +92,7 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
             api_key = os.environ.get("GOOGLE_API_KEY", "")
             provider = GeminiProvider(api_key=api_key)
 
-            synthesis_prompt = build_synthesis_prompt(message, bundle)
+            synthesis_prompt = build_synthesis_prompt(message, bundle, history=messages)
             synth_messages = [{"role": "user", "content": synthesis_prompt}]
 
             yield _sse("thinking", {"text": "답변 작성 중..."})

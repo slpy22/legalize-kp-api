@@ -20,6 +20,7 @@ from app.repositories.law_repo import LawRepository
 from app.repositories.pg_search import PgSearchRepository
 from app.compare.mapping_service import get_mapping
 from app.chat.term_converter import expand_query
+from app.core.database import get_session_factory
 
 # ── 법령명 캐시 ──
 _law_name_cache: set[str] | None = None
@@ -82,8 +83,12 @@ _DEEP_KW = re.compile(
 )
 
 
-async def classify_query(query: str, session: AsyncSession) -> ClassifiedQuery:
-    """쿼리를 분류하고 엔티티를 추출."""
+async def classify_query(
+    query: str,
+    session: AsyncSession,
+    history: list[dict] | None = None,
+) -> ClassifiedQuery:
+    """쿼리를 분류하고 엔티티를 추출. 대화 이력에서 문맥도 참고."""
     law_names = await _get_law_names(session)
     expanded = expand_query(query)
 
@@ -93,10 +98,30 @@ async def classify_query(query: str, session: AsyncSession) -> ClassifiedQuery:
         expanded=expanded,
     )
 
-    # 1. 법령명 매칭
+    # 0. 대화 이력에서 문맥 추출 (이전에 언급된 법령명 등)
+    context_law_names: list[str] = []
+    if history:
+        for msg in history[-6:]:  # 최근 3턴 (user+assistant)
+            content = msg.get("content", "")
+            for name in law_names:
+                if name in content and name not in context_law_names:
+                    context_law_names.append(name)
+
+    # 1. 법령명 매칭 (현재 쿼리에서)
     for name in law_names:
         if name in query:
             cq.law_names.append(name)
+
+    # 1-1. 현재 쿼리에 법령명이 없으면 대화 이력에서 가져오기
+    if not cq.law_names and context_law_names:
+        # "그 법", "이 법", "위 법", "해당" 등 지시어가 있으면 이전 법령 참조
+        has_reference = any(kw in query for kw in [
+            "그 법", "이 법", "위 법", "해당", "거기", "그것", "이것",
+            "같은 법", "그중", "위에", "아까", "방금",
+        ])
+        # 또는 쿼리가 매우 짧으면 (후속 질문일 가능성)
+        if has_reference or len(query) < 20:
+            cq.law_names = context_law_names[:3]
 
     # 2. 조문번호 매칭
     art_match = _ARTICLE_PAT.search(query)
@@ -291,7 +316,7 @@ async def _strategy_multi_law(cq, pg, session, bundle, progress):
     # 각 법령에서 관련 조문 병렬 검색
     tasks = []
     for law_name in top_laws:
-        tasks.append(_search_articles_db(session, query, law_name=law_name, limit=5))
+        tasks.append(_search_articles_db(None, query, law_name=law_name, limit=5))
 
     results = await asyncio.gather(*tasks)
     lines = []
@@ -332,7 +357,7 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
     task_meta = []  # (law_name, keyword) tracking
     for law_name in target_laws:
         for kw in cq.analysis_keywords:
-            tasks.append(_search_articles_db(session, kw, law_name=law_name, limit=5))
+            tasks.append(_search_articles_db(None, kw, law_name=law_name, limit=5))
             task_meta.append((law_name, kw))
 
     results = await asyncio.gather(*tasks)
@@ -447,18 +472,30 @@ async def _strategy_term_lookup(cq, session, pg, bundle, progress):
 # ── 공통 DB 검색 ──
 
 async def _search_articles_db(
+    session_or_none,
+    query: str,
+    law_name: str | None = None,
+    limit: int = 10,
+) -> list[dict]:
+    """조문 내용 ILIKE 검색. session=None이면 새 세션 생성 (병렬 안전)."""
+    if session_or_none is None:
+        factory = get_session_factory()
+        async with factory() as session:
+            return await _search_articles_impl(session, query, law_name, limit)
+    return await _search_articles_impl(session_or_none, query, law_name, limit)
+
+
+async def _search_articles_impl(
     session: AsyncSession,
     query: str,
     law_name: str | None = None,
     limit: int = 10,
 ) -> list[dict]:
-    """조문 내용 ILIKE 검색."""
     expanded = expand_query(query)
     words = expanded.split()
     if not words:
         return []
 
-    # AND 조건
     conditions = " AND ".join(
         f"(a.content ILIKE :w{i} OR a.article_title ILIKE :w{i})" for i in range(len(words))
     )
@@ -483,7 +520,6 @@ async def _search_articles_db(
     rows = result.mappings().all()
 
     if not rows and len(words) > 1:
-        # AND 실패 → OR 폴백
         or_conditions = " OR ".join(
             f"(a.content ILIKE :w{i} OR a.article_title ILIKE :w{i})" for i in range(len(words))
         )
@@ -513,13 +549,31 @@ SYNTHESIS_SYSTEM_PROMPT = """당신은 북한법 전문 분석가입니다. 아�
 6. 중간 과정이나 계획을 출력하지 마세요. 바로 최종 답변만 작성하세요."""
 
 
-def build_synthesis_prompt(user_query: str, bundle: EvidenceBundle) -> str:
-    """LLM에게 전달할 종합 프롬프트 구성."""
+def build_synthesis_prompt(
+    user_query: str,
+    bundle: EvidenceBundle,
+    history: list[dict] | None = None,
+) -> str:
+    """LLM에게 전달할 종합 프롬프트 구성 (대화 이력 포함)."""
     evidence = bundle.evidence_text
     if len(evidence) > 8000:
         evidence = evidence[:8000] + "\n\n...(일부 생략)"
 
-    return f"""사용자 질문: {user_query}
+    # 대화 이력 요약 (최근 3턴)
+    history_section = ""
+    if history:
+        recent = history[-6:]  # 최근 3턴
+        hist_lines = []
+        for msg in recent:
+            role = "사용자" if msg["role"] == "user" else "AI"
+            content = msg["content"]
+            if len(content) > 300:
+                content = content[:300] + "..."
+            hist_lines.append(f"[{role}]: {content}")
+        if hist_lines:
+            history_section = "## 이전 대화\n" + "\n".join(hist_lines) + "\n\n"
+
+    return f"""{history_section}사용자 질문: {user_query}
 
 ## 조사 결과
 
@@ -527,6 +581,7 @@ def build_synthesis_prompt(user_query: str, bundle: EvidenceBundle) -> str:
 
 ---
 위 조사 결과를 바탕으로 사용자 질문에 체계적이고 구체적으로 답변하세요.
+이전 대화 문맥이 있다면 그것을 참고하여 연속적으로 답변하세요.
 반드시 법령명과 조문번호를 인용하세요."""
 
 
