@@ -17,6 +17,7 @@ from app.chat.orchestrator import (
     execute_strategy,
     build_synthesis_prompt,
     build_fallback_answer,
+    validate_citations,
     SYNTHESIS_SYSTEM_PROMPT,
     EvidenceBundle,
 )
@@ -120,7 +121,16 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
                     yield _sse("token", {"text": chunk})
                 full_response = fallback
 
-            # 7. 세션 저장
+            # 7. 인용 검증 (서버 자동)
+            if full_response and len(full_response) > 100:
+                try:
+                    validation = await validate_citations(full_response, session)
+                    if validation["valid"] or validation["invalid"] or validation["unchecked"]:
+                        yield _sse("validation", validation)
+                except Exception as e:
+                    logger.warning(f"Citation validation failed: {e}")
+
+            # 8. 세션 저장
             chat_session.add_message(sid, "user", message)
             if full_response:
                 chat_session.add_message(sid, "assistant", full_response)

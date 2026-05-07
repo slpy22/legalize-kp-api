@@ -1,9 +1,13 @@
 """남한법 조회 클라이언트 — beopmang 1차 + 국가법령정보센터 폴백."""
 from __future__ import annotations
 
+import re
 import httpx
 
 from app.core.config import get_config
+
+# 프로세스 레벨 MST 캐시 (law_name → MST_id). 불변값이므로 재시작 전까지 유효.
+_mst_cache: dict[str, str] = {}
 
 
 class KrLawClient:
@@ -178,6 +182,43 @@ class KrLawClient:
             }
         except Exception:
             return {}
+
+    async def _resolve_mst(self, law_name: str) -> str | None:
+        """법령명 → MST(법령일련번호) 조회. 캐시 우선."""
+        if law_name in _mst_cache:
+            return _mst_cache[law_name]
+        results = await self._search_lawgo(law_name)
+        if not results:
+            return None
+        mst = results[0].get("law_id", "")
+        if mst:
+            _mst_cache[law_name] = mst
+            # 실제 법령명도 캐시 (검색 결과의 정확한 이름)
+            actual_name = results[0].get("law_name", "")
+            if actual_name and actual_name != law_name:
+                _mst_cache[actual_name] = mst
+        return mst
+
+    async def get_article_by_number(
+        self, law_name: str, article_number: str | None = None
+    ) -> list[dict]:
+        """남한법 특정 조문 조회. article_number=None이면 전체 반환."""
+        overview = await self.get_law_overview(law_name)
+        if not overview or not overview.get("articles"):
+            return []
+
+        articles = overview["articles"]
+        if article_number is None:
+            return articles
+
+        # 조문번호 매칭 (제N조 형식 또는 숫자)
+        target = re.sub(r"[^0-9]", "", str(article_number))
+        matched = []
+        for a in articles:
+            num = re.sub(r"[^0-9]", "", str(a.get("article_number", "")))
+            if num == target:
+                matched.append(a)
+        return matched
 
     async def close(self):
         await self._client.aclose()

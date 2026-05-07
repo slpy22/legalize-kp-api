@@ -82,6 +82,72 @@ _DEEP_KW = re.compile(
     r"어떻게.*작동|요소|분석|조항.*찾|찾아.*조항"
 )
 
+# ── 분석 프레임워크 템플릿 ──
+_ANALYSIS_TEMPLATES = {
+    "기본권_제한": {
+        "trigger": re.compile(r"기본권|제한|처벌|통제|침해|위반"),
+        "search_keywords": ["금지", "의무", "처벌", "승인", "통제", "제한", "허가"],
+        "analysis_framework": (
+            "다음 프레임워크로 분석하세요:\n"
+            "1. 의무 조항 (시민/기관에 부과되는 의무)\n"
+            "2. 금지/제한 조항 (명시적 금지사항)\n"
+            "3. 승인/허가 조항 (국가 승인 없이 불가능한 활동)\n"
+            "4. 처벌 조항 (위반 시 제재)\n"
+            "5. 감독/통제 조항 (국가 감시 메커니즘)\n"
+            "각 조항에 대해 기본권과의 관계를 분석하세요."
+        ),
+    },
+    "남북_비교": {
+        "trigger": re.compile(r"비교|남한|대비|차이|대응"),
+        "requires_kr_law": True,
+        "analysis_framework": (
+            "다음 프레임워크로 비교하세요:\n"
+            "1. 법의 목적/사명 비교\n"
+            "2. 규율 범위 비교\n"
+            "3. 개인 권리 보장 수준 비교\n"
+            "4. 국가 역할/통제 수준 비교\n"
+            "5. 처벌/제재 비교\n"
+            "양쪽 조문을 나란히 인용하세요."
+        ),
+    },
+    "투자_관련": {
+        "trigger": re.compile(r"투자|외국인|합영|합작|경제지대"),
+        "search_keywords": ["투자", "외국인", "합영", "합작", "경제지대", "특구"],
+        "requires_kr_law": True,
+        "analysis_framework": (
+            "다음 프레임워크로 분석하세요:\n"
+            "1. 투자 허용 범위 및 제한 업종\n"
+            "2. 외국인 투자자 권리 보호\n"
+            "3. 투자 인센티브 (세금, 토지)\n"
+            "4. 분쟁 해결 메커니즘\n"
+            "5. 특수경제지대 특례\n"
+            "양쪽 조문을 나란히 인용하세요."
+        ),
+    },
+    "노동_관련": {
+        "trigger": re.compile(r"노동|근로|임금|로동|휴식"),
+        "search_keywords": ["로동", "임금", "휴식", "보호", "안전"],
+        "requires_kr_law": True,
+        "analysis_framework": (
+            "다음 프레임워크로 분석하세요:\n"
+            "1. 노동자 기본 권리 (근로시간, 휴식, 임금)\n"
+            "2. 노동 의무 및 규율\n"
+            "3. 노동 보호 (안전, 건강)\n"
+            "4. 여성/청소년 특별 보호\n"
+            "5. 위반 시 제재\n"
+            "양쪽 조문을 나란히 인용하세요."
+        ),
+    },
+}
+
+
+def _match_analysis_template(query: str) -> dict | None:
+    """쿼리에 매칭되는 분석 템플릿 반환."""
+    for name, tpl in _ANALYSIS_TEMPLATES.items():
+        if tpl["trigger"].search(query):
+            return {**tpl, "template_name": name}
+    return None
+
 
 async def classify_query(
     query: str,
@@ -166,9 +232,10 @@ async def classify_query(
 @dataclass
 class EvidenceBundle:
     query_type: str
-    steps: list[dict] = field(default_factory=list)  # {"action": str, "detail": str}
+    steps: list[dict] = field(default_factory=list)
     evidence_text: str = ""
     sources: list[dict] = field(default_factory=list)
+    analysis_framework: str = ""  # 분석 프레임워크 (LLM 프롬프트에 주입)
 
     def add_step(self, action: str, detail: str = ""):
         self.steps.append({"action": action, "detail": detail})
@@ -388,14 +455,47 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
                 lines.append(f"### 제{num}조 {title}\n{content}")
                 bundle.sources.append({"law_name": law_name, "article": str(num)})
 
+    # 분석 템플릿 매칭 → 남한법 비교 필요 시 추가 조회
+    template = _match_analysis_template(cq.original)
+    if template and template.get("requires_kr_law") and target_laws:
+        from app.compare.beopmang_client import KrLawClient
+        # 첫 번째 법령의 매핑된 남한법 조회
+        mapping = await get_mapping(session, target_laws[0])
+        kr_names = mapping.get("kr_names", []) if "error" not in mapping else []
+        if kr_names:
+            kr_name = kr_names[0]
+            await progress("남한법 조회", kr_name)
+            client = KrLawClient()
+            try:
+                kr_articles = await client.get_article_by_number(kr_name)
+                if kr_articles:
+                    lines.append(f"\n## 남한 대응법: {kr_name} ({len(kr_articles)}조)")
+                    for a in kr_articles[:10]:
+                        num = a.get("article_number", "")
+                        title = a.get("article_title", "")
+                        content = a.get("content", "")
+                        if len(content) > 200:
+                            content = content[:200] + "..."
+                        lines.append(f"**{num} {title}**: {content}")
+                        bundle.sources.append({"law_name": kr_name, "article": num})
+            except Exception:
+                lines.append(f"\n남한법 '{kr_name}' 조회 불가")
+            finally:
+                await client.close()
+
+    # 분석 프레임워크 주입
+    if template and template.get("analysis_framework"):
+        bundle.analysis_framework = template["analysis_framework"]
+
     bundle.evidence_text = "\n\n".join(lines) if lines else "관련 조문을 찾을 수 없습니다."
 
 
 async def _strategy_comparison(cq, repo, pg, session, bundle, progress):
-    """남북법 비교."""
+    """남북법 비교 — 양쪽 조문 나란히 인용."""
+    from app.compare.beopmang_client import KrLawClient
+
     law_name = cq.law_names[0] if cq.law_names else ""
     if not law_name:
-        # 키워드에서 법령 추측
         await progress("법령 검색", cq.expanded)
         laws, _ = await pg.search_laws(cq.expanded, limit=1)
         if laws:
@@ -409,6 +509,7 @@ async def _strategy_comparison(cq, repo, pg, session, bundle, progress):
     mapping = await get_mapping(session, law_name)
 
     lines = [f"## {law_name} 남북법 비교"]
+    kr_names: list[str] = []
     if "error" not in mapping:
         kr_names = mapping.get("kr_names", [])
         lines.append(f"- 대응 남한법: {', '.join(kr_names)}")
@@ -417,19 +518,47 @@ async def _strategy_comparison(cq, repo, pg, session, bundle, progress):
             lines.append(f"- 공통 영역: {', '.join(mapping['overlap_areas'])}")
         bundle.sources.append({"law_name": law_name, "type": "compare"})
 
-    # 북한법 주요 조문도 조회
+    # 북한법 주요 조문 조회
     law = await repo.get_by_name(law_name)
     if law:
         articles = await repo.get_articles(law["id"])
-        lines.append(f"\n## {law_name} 주요 조문 ({len(articles)}조)")
+        lines.append(f"\n## 북한: {law_name} ({len(articles)}조)")
         for a in articles[:15]:
             num = a.get("article_number", "")
             title = a.get("article_title", "")
             content = a.get("content", "")
-            if len(content) > 150:
-                content = content[:150] + "..."
+            if len(content) > 200:
+                content = content[:200] + "..."
             lines.append(f"**제{num}조 {title}**: {content}")
             bundle.sources.append({"law_name": law_name, "article": str(num)})
+
+    # 남한법 조문 조회 (법제처 API)
+    if kr_names:
+        kr_name = kr_names[0]
+        await progress("남한법 조회", kr_name)
+        client = KrLawClient()
+        try:
+            kr_articles = await client.get_article_by_number(kr_name)
+            if kr_articles:
+                lines.append(f"\n## 남한: {kr_name} ({len(kr_articles)}조)")
+                for a in kr_articles[:15]:
+                    num = a.get("article_number", "")
+                    title = a.get("article_title", "")
+                    content = a.get("content", "")
+                    if len(content) > 200:
+                        content = content[:200] + "..."
+                    lines.append(f"**{num} {title}**: {content}")
+                    bundle.sources.append({"law_name": kr_name, "article": num})
+            else:
+                lines.append(f"\n남한법 '{kr_name}' 조문 조회 불가 (법제처 API 오류)")
+        except Exception:
+            lines.append(f"\n남한법 '{kr_name}' 조문 조회 불가 (법제처 API 오류)")
+        finally:
+            await client.close()
+    # 분석 프레임워크 매칭
+    template = _match_analysis_template(cq.original)
+    if template and template.get("analysis_framework"):
+        bundle.analysis_framework = template["analysis_framework"]
 
     bundle.evidence_text = "\n\n".join(lines)
 
@@ -573,16 +702,67 @@ def build_synthesis_prompt(
         if hist_lines:
             history_section = "## 이전 대화\n" + "\n".join(hist_lines) + "\n\n"
 
+    framework_section = ""
+    if bundle.analysis_framework:
+        framework_section = f"\n## 분석 프레임워크\n{bundle.analysis_framework}\n"
+
     return f"""{history_section}사용자 질문: {user_query}
 
 ## 조사 결과
 
 {evidence}
-
+{framework_section}
 ---
 위 조사 결과를 바탕으로 사용자 질문에 체계적이고 구체적으로 답변하세요.
+{f'위 분석 프레임워크의 각 항목별로 구조화하여 답변하세요.' if bundle.analysis_framework else ''}
 이전 대화 문맥이 있다면 그것을 참고하여 연속적으로 답변하세요.
 반드시 법령명과 조문번호를 인용하세요."""
+
+
+# ── 인용 검증 ──
+
+_CITATION_PAT = re.compile(r"([\w가-힣,\s]+?(?:법|령))\s*제(\d+)조")
+
+
+async def validate_citations(
+    response_text: str,
+    session: AsyncSession,
+) -> dict:
+    """LLM 답변에서 '법령명 제N조' 패턴을 추출하고 실존 확인.
+
+    Returns: {"valid": [...], "invalid": [...], "unchecked": [...]}
+    """
+    citations = _CITATION_PAT.findall(response_text)
+    if not citations:
+        return {"valid": [], "invalid": [], "unchecked": []}
+
+    law_names = await _get_law_names(session)
+    valid = []
+    invalid = []
+    unchecked = []
+
+    # 북한법 검증 (DB)
+    repo = LawRepository(session)
+    for raw_name, art_num in citations:
+        name = raw_name.strip()
+        citation_str = f"{name} 제{art_num}조"
+
+        if name in law_names:
+            # 북한법 — DB에서 확인
+            law = await repo.get_by_name(name)
+            if law:
+                articles = await repo.get_articles(law["id"], article_number=art_num)
+                if articles:
+                    valid.append(citation_str)
+                else:
+                    invalid.append(citation_str)
+            else:
+                invalid.append(citation_str)
+        else:
+            # 남한법 또는 미확인 — unchecked로 분류
+            unchecked.append(citation_str)
+
+    return {"valid": valid, "invalid": invalid, "unchecked": unchecked}
 
 
 def build_fallback_answer(user_query: str, bundle: EvidenceBundle) -> str:
