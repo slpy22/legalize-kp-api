@@ -347,8 +347,8 @@ async def _generate_research_plan(query: str) -> dict:
 다음 JSON 형식으로 응답하세요 (JSON만 출력, 다른 텍스트 없이):
 {{
   "pre_read": ["먼저 읽어야 할 법령명 목록 (예: 비교 기준이 되는 법)"],
-  "semantic_queries": ["시맨틱 검색 쿼리 5~8개 (다양한 각도)"],
-  "keyword_patterns": ["조문 내용 키워드 검색 패턴 5~8개"],
+  "semantic_queries": ["시맨틱 검색 쿼리 6~10개 (최대한 다양한 각도)"],
+  "keyword_patterns": ["조문 내용 키워드 검색 패턴 6~10개 (구체적인 법률 용어)"],
   "related_law_search": ["형법이나 행정처벌법 등 추가 탐색할 법 유형"],
   "result_structure": "결과 정리 방식 (예: 카테고리별, 헌법 조항별 대조, 절차순)"
 }}"""
@@ -412,7 +412,7 @@ async def deep_search(query: str, topic: str = "") -> str:
             from app.repositories.law_repo import LawRepository
             async with factory() as session:
                 repo = LawRepository(session)
-                for law_name in plan["pre_read"][:3]:
+                for law_name in plan["pre_read"][:5]:
                     law = await repo.get_by_name(law_name)
                     if law:
                         articles = await repo.get_articles(law["id"])
@@ -438,11 +438,11 @@ async def deep_search(query: str, topic: str = "") -> str:
         embed_client = genai_embed.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
         qdrant_repo = QdrantSearchRepository(get_qdrant(), collection)
 
-        for sq in semantic_queries[:6]:
+        for sq in semantic_queries[:8]:
             try:
                 resp = embed_client.models.embed_content(model=embed_model, contents=sq)
                 vector = resp.embeddings[0].values
-                hits = qdrant_repo.search(vector, limit=10)
+                hits = qdrant_repo.search(vector, limit=15)
                 for h in hits:
                     name = h.get("law_name", "")
                     num = h.get("article_number", "")
@@ -456,13 +456,13 @@ async def deep_search(query: str, topic: str = "") -> str:
         kw_patterns = plan.get("keyword_patterns", [])
         if kw_patterns:
             async with factory() as session:
-                for p in kw_patterns[:8]:
+                for p in kw_patterns[:10]:
                     try:
                         r = await session.execute(text(
                             """SELECT a.article_number, a.article_title, a.content, l.name as law_name
                             FROM articles a JOIN laws l ON a.law_id = l.id
                             AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
-                            ORDER BY l.name, a.position LIMIT 8"""
+                            ORDER BY l.name, a.position LIMIT 12"""
                         ), {"kw": f"%{p}%"})
                         for row in r.mappings().all():
                             key = f"{row['law_name']}_제{row['article_number']}조"
@@ -476,9 +476,9 @@ async def deep_search(query: str, topic: str = "") -> str:
         if related_laws:
             # 질문에서 핵심 명사 추출하여 관련법에서 검색
             nouns = _extract_nouns(query)
-            search_terms = [n for n in nouns if len(n) >= 2][:5]
+            search_terms = [n for n in nouns if len(n) >= 2][:8]
             async with factory() as session:
-                for law_name in related_laws[:3]:
+                for law_name in related_laws[:5]:
                     for term in search_terms:
                         try:
                             r = await session.execute(text(
@@ -486,7 +486,7 @@ async def deep_search(query: str, topic: str = "") -> str:
                                 FROM articles a JOIN laws l ON a.law_id = l.id
                                 WHERE l.name = :ln
                                 AND (a.content ILIKE :kw OR a.article_title ILIKE :kw)
-                                ORDER BY a.position LIMIT 5"""
+                                ORDER BY a.position LIMIT 8"""
                             ), {"ln": law_name, "kw": f"%{term}%"})
                             for row in r.mappings().all():
                                 key = f"{row['law_name']}_제{row['article_number']}조"
@@ -514,12 +514,12 @@ async def deep_search(query: str, topic: str = "") -> str:
         if pre_read_content:
             for law_name, articles in pre_read_content.items():
                 lines.append(f"\n### [기준법] {law_name} ({len(articles)}조)")
-                for a in articles[:20]:
+                for a in articles[:30]:
                     num = a.get("article_number", "")
                     title = a.get("article_title", "")
                     content = a.get("content", "")
-                    if len(content) > 150:
-                        content = content[:150] + "..."
+                    if len(content) > 200:
+                        content = content[:200] + "..."
                     lines.append(f"- **제{num}조 {title}**: {content}")
 
         # 나머지 발견 조문 (선행 읽기 법령 제외)
@@ -529,19 +529,19 @@ async def deep_search(query: str, topic: str = "") -> str:
                 continue
             arts = sorted(by_law[law_name], key=lambda x: int(x.get("article_number", 0) or 0))
             lines.append(f"\n### {law_name} ({len(arts)}개 조문)")
-            for a in arts[:6]:
+            for a in arts[:10]:
                 num = a.get("article_number", "")
                 title = a.get("article_title", "")
                 content = a.get("content", a.get("content_snippet", ""))
-                if len(content) > 150:
-                    content = content[:150] + "..."
+                if len(content) > 200:
+                    content = content[:200] + "..."
                 lines.append(f"- **제{num}조 {title}**: {content}")
-            if len(arts) > 6:
-                lines.append(f"  ... 외 {len(arts)-6}건")
+            if len(arts) > 10:
+                lines.append(f"  ... 외 {len(arts)-10}건")
 
         result = "\n".join(lines)
-        if len(result) > 8000:
-            result = result[:8000] + "\n\n...(일부 생략)"
+        if len(result) > 12000:
+            result = result[:12000] + "\n\n...(일부 생략)"
         return result
 
     except Exception as e:

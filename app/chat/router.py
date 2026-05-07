@@ -149,8 +149,8 @@ async def _fallback_synthesis_direct(user_query: str, tool_results: list[str]) -
     from google.genai import Client, types
 
     evidence = "\n\n".join(tool_results)
-    if len(evidence) > 6000:
-        evidence = evidence[:6000] + "\n...(이하 생략)"
+    if len(evidence) > 10000:
+        evidence = evidence[:10000] + "\n...(이하 생략)"
 
     prompt = f"""사용자 질문: {user_query}
 
@@ -202,8 +202,8 @@ async def _fallback_synthesis(user_query: str, session_id: str) -> str:
         return ""
 
     evidence = "\n\n".join(tool_results)
-    if len(evidence) > 6000:
-        evidence = evidence[:6000] + "\n...(이하 생략)"
+    if len(evidence) > 10000:
+        evidence = evidence[:10000] + "\n...(이하 생략)"
 
     prompt = f"""사용자 질문: {user_query}
 
