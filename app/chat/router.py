@@ -1,9 +1,9 @@
+"""챗봇 API — 서버 주도 오케스트레이션 에이전트."""
 from __future__ import annotations
 
 import json
 import logging
 import os
-import re
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -12,39 +12,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.chat import session as chat_session
 from app.chat.term_converter import expand_query
-from app.chat.tools import TOOL_DECLARATIONS, SYSTEM_PROMPT, execute_tool
+from app.chat.orchestrator import (
+    classify_query,
+    execute_strategy,
+    build_synthesis_prompt,
+    build_fallback_answer,
+    SYNTHESIS_SYSTEM_PROMPT,
+    EvidenceBundle,
+)
 from app.chat.providers.gemini import GeminiProvider
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1")
-
-MAX_TOOL_CALLS = 15
-MAX_TOOL_RESULT_LEN = 4000
-
-# 중간 사고/계획 텍스트 감지 패턴
-_PLANNING_PATTERNS = re.compile(
-    r"하겠습니다|살펴보겠|검색하겠|조회하겠|확인하겠|찾아보겠|분석하겠|알아보겠"
-    r"|검색$|조회$|실행:|계획:|관찰:"
-    r"|키워드로 검색$|도구를 사용"
-)
-
-
-def _is_planning_text(text: str) -> bool:
-    """텍스트가 중간 계획/사고 과정인지 판단."""
-    if not text.strip():
-        return False
-    last_chunk = text[-300:]
-    return bool(_PLANNING_PATTERNS.search(last_chunk))
-
-
-def _is_final_answer(text: str, tool_call_count: int) -> bool:
-    """텍스트가 최종 답변인지 판단."""
-    if tool_call_count == 0:
-        return True  # 도구 호출 없이 바로 답변 (간단한 질문)
-    # 충분한 길이 + 계획 패턴 없음
-    if len(text) > 200 and not _is_planning_text(text):
-        return True
-    return False
 
 
 @router.post("/chat")
@@ -54,148 +33,95 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
     session_id = body.get("session_id")
 
     async def event_stream():
-        all_sources: list[dict] = []
         sid = ""
         try:
             # 1. Session
             sid, messages = chat_session.get_or_create(session_id)
             yield _sse("session", {"session_id": sid})
 
-            # 2. Expand query
-            expanded_message = expand_query(message)
+            # 2. 쿼리 분류 (서버 결정론적)
+            cq = await classify_query(message, session)
+            yield _sse("thinking", {"text": f"분석 유형: {cq.query_type}"})
 
-            # 3. Add user message
-            chat_session.add_message(sid, "user", expanded_message)
-            messages = chat_session.get_or_create(sid)[1]
+            # 3. 검색 전략 실행 (서버 주도, 병렬)
+            step_count = 0
 
-            # 4. Provider
+            async def on_progress(action: str, detail: str):
+                nonlocal step_count
+                step_count += 1
+                yield_data = {"text": f"{action}: {detail}", "step": step_count}
+                # 직접 yield 불가하므로 아래서 처리
+
+            # progress 콜백을 리스트에 수집
+            progress_events: list[dict] = []
+
+            async def collect_progress(action: str, detail: str):
+                nonlocal step_count
+                step_count += 1
+                progress_events.append({
+                    "action": action,
+                    "detail": detail,
+                    "step": step_count,
+                })
+
+            bundle = await execute_strategy(cq, session, on_progress=collect_progress)
+
+            # 진행 상황 이벤트 전송
+            for evt in progress_events:
+                yield _sse("tool_call", {
+                    "name": evt["action"],
+                    "args": {"detail": evt["detail"]},
+                    "step": evt["step"],
+                })
+
+            # 4. 증거 확인
+            if not bundle.evidence_text or bundle.evidence_text.strip() in [
+                "검색 결과가 없습니다.",
+                "관련 법령을 찾을 수 없습니다.",
+                "관련 조문을 찾을 수 없습니다.",
+            ]:
+                fallback = build_fallback_answer(message, bundle)
+                for chunk in _chunk_text(fallback, 80):
+                    yield _sse("token", {"text": chunk})
+                chat_session.add_message(sid, "user", message)
+                chat_session.add_message(sid, "assistant", fallback)
+                yield _done(bundle)
+                return
+
+            # 5. LLM 종합 답변 생성 (도구 호출 없이 텍스트만)
             api_key = os.environ.get("GOOGLE_API_KEY", "")
             provider = GeminiProvider(api_key=api_key)
 
-            # 5. Agent loop
-            tool_call_count = 0
-            empty_rounds = 0
-            full_response = ""       # 최종 사용자에게 보이는 응답
-            thinking_buffer = ""     # 중간 사고 과정 (사용자에게 안 보임)
-            final_answer_started = False
+            synthesis_prompt = build_synthesis_prompt(message, bundle)
+            synth_messages = [{"role": "user", "content": synthesis_prompt}]
 
-            while tool_call_count < MAX_TOOL_CALLS:
-                tool_called = False
-                round_text = ""
+            yield _sse("thinking", {"text": "답변 작성 중..."})
 
+            full_response = ""
+            try:
                 async for event in provider.stream_with_tools(
-                    messages, TOOL_DECLARATIONS, SYSTEM_PROMPT
-                ):
-                    if event["type"] == "token":
-                        round_text += event["text"]
-
-                        # 도구를 이미 호출한 상태에서 텍스트가 오면 최종 답변 시작
-                        if tool_call_count > 0 and not final_answer_started:
-                            # 첫 텍스트 — 계획인지 최종 답변인지 판단 보류
-                            # 버퍼에 누적하고 나중에 판단
-                            pass
-                        elif tool_call_count == 0:
-                            # 도구 호출 전 — 바로 스트리밍
-                            pass
-
-                    elif event["type"] == "tool_call":
-                        tool_called = True
-                        tool_call_count += 1
-                        tool_name = event["name"]
-                        tool_args = event["args"]
-
-                        # 이전 라운드 텍스트가 있으면 사고 과정으로 처리
-                        if round_text.strip():
-                            thinking_buffer += round_text
-                            yield _sse("thinking", {"text": round_text.strip()[:200]})
-                            round_text = ""
-
-                        yield _sse("tool_call", {
-                            "name": tool_name,
-                            "args": tool_args,
-                            "step": tool_call_count,
-                        })
-
-                        messages.append({
-                            "role": "assistant",
-                            "content": "",
-                            "tool_call": {"name": tool_name, "args": tool_args},
-                        })
-
-                        result = await execute_tool(tool_name, tool_args, session)
-                        all_sources.extend(result.get("sources", []))
-
-                        yield _sse("tool_result", {
-                            "name": tool_name,
-                            "result": result["result"][:500],
-                            "step": tool_call_count,
-                        })
-
-                        tool_content = result["result"]
-                        if len(tool_content) > MAX_TOOL_RESULT_LEN:
-                            tool_content = tool_content[:MAX_TOOL_RESULT_LEN] + "\n...(이하 생략)"
-                        messages.append({
-                            "role": "tool",
-                            "content": tool_content,
-                            "tool_data": {"name": tool_name},
-                        })
-                        break
-
-                if not tool_called:
-                    if round_text.strip():
-                        # 텍스트만 나온 라운드
-                        if _is_planning_text(round_text) and tool_call_count < MAX_TOOL_CALLS:
-                            # 중간 계획 → 도구 호출 유도
-                            thinking_buffer += round_text
-                            yield _sse("thinking", {"text": round_text.strip()[:200]})
-                            messages.append({
-                                "role": "assistant",
-                                "content": round_text,
-                            })
-                            messages.append({
-                                "role": "user",
-                                "content": "(계획은 충분합니다. 이제 도구를 호출하여 실제 조문을 조회하세요. 텍스트로 설명하지 말고 도구를 호출하세요.)",
-                            })
-                            continue
-                        else:
-                            # 최종 답변
-                            full_response += round_text
-                            for token in _chunk_text(round_text, 100):
-                                yield _sse("token", {"text": token})
-                            break
-                    else:
-                        # 빈 응답
-                        empty_rounds += 1
-                        if empty_rounds >= 2:
-                            break
-
-            # 6. 도구를 호출했지만 최종 답변이 없는 경우 → 강제 종합 요청
-            if tool_call_count > 0 and not full_response.strip():
-                messages.append({
-                    "role": "user",
-                    "content": "(조사가 완료되었습니다. 지금까지 조회한 모든 조문 내용을 바탕으로 사용자의 원래 질문에 대해 구체적이고 체계적으로 답변하세요. 반드시 법령명과 조문번호를 인용하며 분석하세요. 중간 계획이나 사고 과정은 출력하지 말고 바로 최종 답변만 하세요.)",
-                })
-                async for event in provider.stream_with_tools(
-                    messages, TOOL_DECLARATIONS, SYSTEM_PROMPT
+                    synth_messages, [], SYNTHESIS_SYSTEM_PROMPT  # 빈 도구 → 텍스트만
                 ):
                     if event["type"] == "token":
                         full_response += event["text"]
                         yield _sse("token", {"text": event["text"]})
-                    elif event["type"] == "tool_call":
-                        # 추가 도구 호출도 허용
-                        tc_name = event["name"]
-                        tc_args = event["args"]
-                        messages.append({"role": "assistant", "content": "", "tool_call": {"name": tc_name, "args": tc_args}})
-                        result = await execute_tool(tc_name, tc_args, session)
-                        all_sources.extend(result.get("sources", []))
-                        yield _sse("tool_call", {"name": tc_name, "args": tc_args})
-                        yield _sse("tool_result", {"name": tc_name, "result": result["result"][:500]})
-                        tc = result["result"]
-                        if len(tc) > MAX_TOOL_RESULT_LEN:
-                            tc = tc[:MAX_TOOL_RESULT_LEN] + "\n...(이하 생략)"
-                        messages.append({"role": "tool", "content": tc, "tool_data": {"name": tc_name}})
+            except Exception as e:
+                logger.warning(f"LLM synthesis failed: {e}")
 
-            # 7. Save
+            # 6. LLM 실패 시 폴백
+            if len(full_response.strip()) < 50:
+                logger.info("LLM response too short, using fallback")
+                fallback = build_fallback_answer(message, bundle)
+                if full_response.strip():
+                    fallback = full_response + "\n\n---\n" + fallback
+                else:
+                    full_response = ""
+                for chunk in _chunk_text(fallback, 80):
+                    yield _sse("token", {"text": chunk})
+                full_response = fallback
+
+            # 7. 세션 저장
+            chat_session.add_message(sid, "user", message)
             if full_response:
                 chat_session.add_message(sid, "assistant", full_response)
 
@@ -203,16 +129,7 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
             logger.exception("Chat error")
             yield _sse("error", {"message": f"서버 오류: {str(e)[:200]}"})
 
-        # 8. Done — 소스 중복 제거
-        seen = set()
-        unique_sources = []
-        for s in all_sources:
-            key = (s.get("law_name", ""), s.get("article", ""))
-            if key not in seen:
-                seen.add(key)
-                unique_sources.append(s)
-
-        yield _sse("done", {"sources": unique_sources, "session_id": sid})
+        yield _done(bundle if 'bundle' in dir() else EvidenceBundle(query_type="error"))
 
     return StreamingResponse(
         event_stream(),
@@ -225,8 +142,19 @@ async def chat_endpoint(request: Request, session: AsyncSession = Depends(get_se
     )
 
 
+def _done(bundle: EvidenceBundle) -> str:
+    """Done 이벤트 — 소스 중복 제거."""
+    seen = set()
+    unique = []
+    for s in bundle.sources:
+        key = (s.get("law_name", ""), s.get("article", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(s)
+    return _sse("done", {"sources": unique})
+
+
 def _chunk_text(text: str, size: int):
-    """텍스트를 size 단위로 나눠서 yield."""
     for i in range(0, len(text), size):
         yield text[i:i + size]
 

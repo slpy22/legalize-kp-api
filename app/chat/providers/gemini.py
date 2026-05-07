@@ -1,4 +1,4 @@
-"""Gemini provider with streaming + function calling + model fallback."""
+"""Gemini provider — streaming text generation."""
 from __future__ import annotations
 
 import asyncio
@@ -9,9 +9,6 @@ from google import genai
 from google.genai import types
 
 logger = logging.getLogger(__name__)
-
-# 모델 우선순위: 고성능 → 경량 폴백
-MODEL_PRIORITY = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 
 class GeminiProvider:
@@ -25,42 +22,47 @@ class GeminiProvider:
         tool_declarations: list[dict],
         system_prompt: str,
     ) -> AsyncGenerator[dict, None]:
-        """Stream response from Gemini with function calling support.
+        """Stream response from Gemini.
 
-        Yields events:
+        tool_declarations가 빈 리스트이면 도구 호출 없이 텍스트만 생성.
+
+        Yields:
           {"type": "token", "text": "..."}
-          {"type": "tool_call", "name": "...", "args": {...}}
+          {"type": "tool_call", "name": "...", "args": {...}}  (도구가 있을 때만)
         """
-        model = self.model
+        # Build tools (비어있으면 None)
+        gemini_tools = None
+        if tool_declarations:
+            gemini_tools = [
+                types.Tool(
+                    function_declarations=[
+                        types.FunctionDeclaration(
+                            name=t["name"],
+                            description=t["description"],
+                            parameters=t["parameters"],
+                        )
+                        for t in tool_declarations
+                    ]
+                )
+            ]
 
-        # Build Gemini tools
-        gemini_tools = [
-            types.Tool(
-                function_declarations=[
-                    types.FunctionDeclaration(
-                        name=t["name"],
-                        description=t["description"],
-                        parameters=t["parameters"],
-                    )
-                    for t in tool_declarations
-                ]
-            )
-        ]
-
-        # Convert messages to Gemini content format
         contents = self._build_contents(messages)
-
-        # Stream response
         loop = asyncio.get_event_loop()
+
+        config = types.GenerateContentConfig(
+            system_instruction=system_prompt,
+        )
+        if gemini_tools:
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                tools=gemini_tools,
+            )
 
         def _start_stream():
             return self.client.models.generate_content_stream(
-                model=model,
+                model=self.model,
                 contents=contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    tools=gemini_tools,
-                ),
+                config=config,
             )
 
         response = await loop.run_in_executor(None, _start_stream)
@@ -96,7 +98,6 @@ class GeminiProvider:
 
     @staticmethod
     def _build_contents(messages: list[dict]) -> list:
-        """Convert internal message format to Gemini Content objects."""
         contents = []
         for msg in messages:
             role = msg["role"]
