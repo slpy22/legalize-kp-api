@@ -15,7 +15,7 @@ from app.chat.providers.gemini import GeminiProvider
 
 router = APIRouter(prefix="/api/v1")
 
-MAX_TOOL_CALLS = 5
+MAX_TOOL_CALLS = 10
 
 
 @router.post("/chat")

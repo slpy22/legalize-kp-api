@@ -3,35 +3,50 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_TERM_PAIRS_PATH = Path("E:/004_북한법/legalize-kp/compare/term_pairs.json")
+# Lazy-loaded reverse map: kr -> kp
+_kr_to_kp: dict[str, str] | None = None
 
-# Build reverse map: kr -> kp
-_kr_to_kp: dict[str, str] = {}
 
-try:
-    with open(_TERM_PAIRS_PATH, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    for item in data.get("terms", []):
-        kr = item.get("kr", "")
-        kp = item.get("kp", "")
-        if kr and kp:
-            _kr_to_kp[kr] = kp
-except (FileNotFoundError, json.JSONDecodeError):
-    pass
+def _load_terms() -> dict[str, str]:
+    """config에서 repo_path를 읽어 term_pairs.json을 로드."""
+    from app.core.config import get_config
+
+    cfg = get_config()
+    repo_path = cfg.get("data", {}).get("repo_path", ".")
+    term_path = Path(repo_path) / "compare" / "term_pairs.json"
+
+    mapping: dict[str, str] = {}
+    try:
+        with open(term_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for item in data.get("terms", []):
+            kr = item.get("kr", "")
+            kp = item.get("kp", "")
+            if kr and kp:
+                mapping[kr] = kp
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return mapping
+
+
+def _get_terms() -> dict[str, str]:
+    global _kr_to_kp
+    if _kr_to_kp is None:
+        _kr_to_kp = _load_terms()
+    return _kr_to_kp
 
 
 def expand_query(query: str) -> str:
     """남한어를 문화어로 변환하고, 원본도 유지하여 검색 범위를 넓힌다.
 
     "소프트웨어 저작권" → "쏘프트웨어 저작권"  (치환)
-    또한 개별 단어 검색도 가능하도록 분리된 단어 목록도 반환.
     """
+    terms = _get_terms()
     converted = query
-    for kr, kp in _kr_to_kp.items():
+    for kr, kp in terms.items():
         if kr in converted:
             converted = converted.replace(kr, kp)
 
-    # 원본과 변환본이 다르면 둘 다 포함 (OR 검색 효과)
     if converted != query:
         return f"{converted} {query}"
     return query
