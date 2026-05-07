@@ -15,41 +15,9 @@ MODEL_PRIORITY = ["gemini-2.5-flash", "gemini-2.5-flash-lite"]
 
 
 class GeminiProvider:
-    def __init__(self, api_key: str, model: str | None = None):
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash-lite"):
         self.client = genai.Client(api_key=api_key)
-        self.model = model  # None이면 자동 선택
-        self._resolved_model: str | None = None
-
-    async def _resolve_model(self) -> str:
-        """사용 가능한 최고 성능 모델을 선택."""
-        if self.model:
-            return self.model
-        if self._resolved_model:
-            return self._resolved_model
-
-        loop = asyncio.get_event_loop()
-        for model_name in MODEL_PRIORITY:
-            try:
-                # 간단한 테스트 호출
-                def _test():
-                    return self.client.models.generate_content(
-                        model=model_name,
-                        contents="test",
-                        config=types.GenerateContentConfig(
-                            max_output_tokens=5,
-                        ),
-                    )
-                await loop.run_in_executor(None, _test)
-                self._resolved_model = model_name
-                logger.info(f"Using model: {model_name}")
-                return model_name
-            except Exception as e:
-                logger.warning(f"Model {model_name} unavailable: {e}")
-                continue
-
-        # 모두 실패 시 마지막 모델 사용
-        self._resolved_model = MODEL_PRIORITY[-1]
-        return self._resolved_model
+        self.model = model
 
     async def stream_with_tools(
         self,
@@ -63,7 +31,7 @@ class GeminiProvider:
           {"type": "token", "text": "..."}
           {"type": "tool_call", "name": "...", "args": {...}}
         """
-        model = await self._resolve_model()
+        model = self.model
 
         # Build Gemini tools
         gemini_tools = [
@@ -95,27 +63,7 @@ class GeminiProvider:
                 ),
             )
 
-        try:
-            response = await loop.run_in_executor(None, _start_stream)
-        except Exception as e:
-            # 모델 실패 시 폴백
-            if model == MODEL_PRIORITY[0] and len(MODEL_PRIORITY) > 1:
-                fallback = MODEL_PRIORITY[-1]
-                logger.warning(f"{model} failed ({e}), falling back to {fallback}")
-                self._resolved_model = fallback
-
-                def _start_fallback():
-                    return self.client.models.generate_content_stream(
-                        model=fallback,
-                        contents=contents,
-                        config=types.GenerateContentConfig(
-                            system_instruction=system_prompt,
-                            tools=gemini_tools,
-                        ),
-                    )
-                response = await loop.run_in_executor(None, _start_fallback)
-            else:
-                raise
+        response = await loop.run_in_executor(None, _start_stream)
 
         _SENTINEL = object()
 
