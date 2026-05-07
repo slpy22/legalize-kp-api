@@ -79,7 +79,9 @@ _TERM_KW = re.compile(r"용어|문화어|뭐라고|말하|번역|표현")
 _ARTICLE_PAT = re.compile(r"제(\d+)조")
 _DEEP_KW = re.compile(
     r"기본권|제한|처벌|통제|의무|권리|침해|위반|제재|감독|"
-    r"어떻게.*작동|요소|분석|조항.*찾|찾아.*조항"
+    r"어떻게.*작동|요소|분석|조항.*찾|찾아.*조항|"
+    r"주체사상|반영|원칙|이념|체계|사상|"
+    r"절차|과정|방법|필요.*법|법적.*절차|어떻게.*해야|하려면"
 )
 
 # ── 분석 프레임워크 템플릿 ──
@@ -210,13 +212,17 @@ async def classify_query(
         cq.query_type = QueryType.TERM_LOOKUP
     elif _DEEP_KW.search(query):
         cq.query_type = QueryType.THEMATIC_DEEP
-        # 분석 키워드 확장
+        # 분석 키워드 확장 — 질문 키워드 기반
         for trigger, expansions in _ANALYSIS_KEYWORD_MAP.items():
             if trigger in query:
                 cq.analysis_keywords.extend(expansions)
+        # 질문의 핵심 명사도 분석 키워드에 추가
+        for w in cq.keywords:
+            if len(w) >= 2 and w not in cq.analysis_keywords:
+                cq.analysis_keywords.append(w)
         if not cq.analysis_keywords:
             cq.analysis_keywords = ["금지", "의무", "처벌", "승인", "통제"]
-        cq.analysis_keywords = list(dict.fromkeys(cq.analysis_keywords))  # dedup
+        cq.analysis_keywords = list(dict.fromkeys(cq.analysis_keywords))[:12]  # dedup, max 12
     elif cq.law_names and len(cq.law_names) == 1:
         cq.query_type = QueryType.SINGLE_LAW
     elif len(cq.keywords) >= 2 or "관련" in query or "법령들" in query:
@@ -444,14 +450,20 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
     # ── Phase 1: 넓은 탐색 ──
     await progress("1단계", "전체 법령에서 관련 조문 탐색")
 
-    # 1-a. 사용자 키워드 + 분석 키워드로 조문 직접 검색 (법령 제한 없이)
+    # 1-a. 분석 키워드 + 쿼리 핵심어로 조문 직접 검색
     search_terms = list(cq.analysis_keywords)
-    # 쿼리에서 추가 키워드 추출 (2글자 이상, 불용어 제외)
-    stopwords = {"관련", "법령", "조항", "있는", "경우", "대해", "어떤", "해석", "집행", "요소"}
+    # 쿼리에서 의미 있는 키워드만 추출 (일반 불용어 + 분석 메타어 제외)
+    stopwords = {
+        "관련", "법령", "조항", "있는", "경우", "대해", "어떤", "해석", "집행", "요소",
+        "북한의", "북한", "남한", "법들이", "법들", "만한", "인간의", "인간",
+        "찾아", "찾아줘", "알려줘", "보여줘", "해줘", "줘",
+        "어떤", "어떻게", "필요", "되는", "하는", "할수", "하려면", "경우에",
+        "법적", "잘못", "잘못할",
+    }
     for w in cq.original.split():
-        if len(w) >= 2 and w not in stopwords:
-            if w not in search_terms:
-                search_terms.append(w)
+        cleaned = re.sub(r"[을를이가은는의에서도와과]$", "", w)
+        if len(cleaned) >= 2 and cleaned not in stopwords and cleaned not in search_terms:
+            search_terms.append(cleaned)
 
     # 특정 법령 지정 시 해당 법령 우선, 아니면 전체 검색
     target_law_filter = cq.law_names[0] if cq.law_names else None
@@ -476,22 +488,22 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
 
     await progress("1단계 결과", f"{len(all_articles)}개 조문, {len(discovered_laws)}개 법령 발견")
 
-    # ── Phase 2: 발견된 법령에서 구조적 패턴 탐색 ──
-    if discovered_laws and not target_law_filter:
-        await progress("2단계", f"발견된 {len(discovered_laws)}개 법령 심층 탐색")
+    # ── Phase 2: Phase 1에서 직접 매칭된 법령만 대상으로 구조적 패턴 추가 탐색 ──
+    # (발견된 법령 전체가 아니라, 조문이 실제 매칭된 법령만)
+    phase1_law_count = len(discovered_laws)
+    if discovered_laws and not target_law_filter and phase1_law_count <= 15:
+        await progress("2단계", f"발견된 {phase1_law_count}개 법령에서 심층 패턴 탐색")
 
-        # 법률 텍스트에서 자주 나타나는 구조적 패턴으로 추가 검색
         structural_patterns = [
-            "처벌을 준다", "할수 없다", "할 수 없다",
-            "승인을 받", "허가를 받", "합의를 받",
-            "의무적으로", "하여야 한다",
-            "몰수한다", "중지시킨다", "금지",
+            "처벌을 준다", "할수 없다",
+            "승인을 받", "의무적으로",
+            "몰수", "중지시킨다",
         ]
         phase2_tasks = []
-        for law_name in list(discovered_laws)[:8]:  # 발견된 법령들 중 최대 8개
+        for law_name in list(discovered_laws)[:8]:
             for pattern in structural_patterns:
                 phase2_tasks.append(
-                    _search_articles_db(None, pattern, law_name=law_name, limit=5)
+                    _search_articles_db(None, pattern, law_name=law_name, limit=3)
                 )
 
         if phase2_tasks:
@@ -503,6 +515,9 @@ async def _strategy_thematic_deep(cq, repo, pg, session, bundle, progress):
                         all_articles[key] = a
 
         await progress("2단계 결과", f"총 {len(all_articles)}개 조문 수집")
+    elif discovered_laws and phase1_law_count > 15:
+        # 너무 많은 법령 → Phase 2 스킵 (Phase 1 결과로 충분)
+        await progress("2단계", f"Phase 1에서 {phase1_law_count}개 법령 발견 — 충분한 증거")
 
     # 특정 법령 지정 시 Phase 2도 해당 법령 내에서 수행
     elif target_law_filter:
@@ -765,6 +780,33 @@ SYNTHESIS_SYSTEM_PROMPT = """당신은 북한법 전문 분석가입니다. 아�
 6. 중간 과정이나 계획을 출력하지 마세요. 바로 최종 답변만 작성하세요."""
 
 
+def _compress_evidence(evidence: str, max_chars: int = 6000) -> str:
+    """증거가 너무 클 때 법령별로 상위 조문만 유지하여 압축."""
+    sections = re.split(r"(?=^## )", evidence, flags=re.MULTILINE)
+    sections = [s for s in sections if s.strip()]
+
+    if not sections:
+        return evidence[:max_chars]
+
+    # 법령당 균등 배분
+    per_section = max(max_chars // max(len(sections), 1), 500)
+    compressed = []
+    total = 0
+    for section in sections:
+        if total + len(section) <= max_chars:
+            compressed.append(section)
+            total += len(section)
+        else:
+            remaining = max_chars - total
+            if remaining > 200:
+                compressed.append(section[:remaining] + "\n...(이하 생략)")
+            break
+
+    result = "\n\n".join(compressed)
+    result += f"\n\n*(총 {len(sections)}개 법령에서 발견, {len(sections) - len(compressed)}개 법령 생략)*"
+    return result
+
+
 def build_synthesis_prompt(
     user_query: str,
     bundle: EvidenceBundle,
@@ -772,8 +814,10 @@ def build_synthesis_prompt(
 ) -> str:
     """LLM에게 전달할 종합 프롬프트 구성 (대화 이력 포함)."""
     evidence = bundle.evidence_text
-    if len(evidence) > 8000:
-        evidence = evidence[:8000] + "\n\n...(일부 생략)"
+
+    # 증거가 너무 크면 법령별로 상위 조문만 유지
+    if len(evidence) > 6000:
+        evidence = _compress_evidence(evidence, max_chars=6000)
 
     # 대화 이력 요약 (최근 3턴)
     history_section = ""
