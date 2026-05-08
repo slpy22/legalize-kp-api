@@ -29,6 +29,60 @@ APP_NAME = "nk_law_chat"
 USER_ID = "web_user"
 
 
+import os as _os
+import random as _random
+from google.genai import Client as _GenaiClient, types as _gentypes
+
+# 추천 질문 캐시 (1시간)
+_suggestions_cache: dict = {"questions": [], "ts": 0}
+
+
+@router.get("/chat/suggestions")
+async def chat_suggestions():
+    """LLM 기반 동적 추천 질문 3개 생성."""
+    import time
+    now = time.time()
+
+    # 캐시 유효 (1시간)
+    if _suggestions_cache["questions"] and now - _suggestions_cache["ts"] < 3600:
+        # 캐시에서 랜덤 3개
+        pool = _suggestions_cache["questions"]
+        return {"questions": _random.sample(pool, min(3, len(pool)))}
+
+    try:
+        client = _GenaiClient(api_key=_os.environ.get("GOOGLE_API_KEY", ""))
+        resp = client.models.generate_content(
+            model="gemini-2.5-flash-lite",
+            contents=(
+                "당신은 북한법 전문 AI 상담 서비스입니다. "
+                "사용자가 관심을 가질 만한 흥미롭고 다양한 북한법 관련 질문 8개를 생성하세요. "
+                "간결하고 구체적인 질문으로, 각 질문은 다른 주제를 다뤄야 합니다. "
+                "JSON 배열로만 응답하세요: [\"질문1\", \"질문2\", ...]"
+            ),
+            config=_gentypes.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
+        )
+        import json as _json
+        questions = _json.loads(resp.text)
+        if isinstance(questions, list) and len(questions) >= 3:
+            _suggestions_cache["questions"] = questions
+            _suggestions_cache["ts"] = now
+            return {"questions": _random.sample(questions, 3)}
+    except Exception as e:
+        logger.warning(f"Suggestions generation failed: {e}")
+
+    # 폴백
+    fallback = [
+        "북한 과학기술법이 뭐야?",
+        "소프트웨어 저작권 관련 법은?",
+        "북한 형벌 체계는?",
+        "북한에서 외국인 투자 관련 법령은?",
+        "북한 헌법의 기본권 조항은?",
+    ]
+    return {"questions": _random.sample(fallback, 3)}
+
+
 @router.post("/chat")
 async def chat_endpoint(request: Request):
     body = await request.json()
