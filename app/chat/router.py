@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.genai import types as genai_types
 
 from app.chat.adk_agent.agent import nk_law_agent
@@ -119,10 +120,15 @@ async def chat_endpoint(request: Request):
             tool_results_buffer: list[str] = []  # 폴백 종합용
 
             # ADK Runner 실행 — 이벤트 스트리밍
+            _run_config = RunConfig(
+                streaming_mode=StreamingMode.SSE,
+            )
+
             async for event in _runner.run_async(
                 user_id=USER_ID,
                 session_id=sid,
                 new_message=user_content,
+                run_config=_run_config,
             ):
                 # 도구 호출 (function_call)
                 fc_list = event.get_function_calls()
@@ -169,14 +175,34 @@ async def chat_endpoint(request: Request):
                     yield _sse("token", {"text": fallback})
                     full_response = fallback
 
-            # 소스 추출 (응답에서 법령명 제N조 패턴)
+            # 소스 추출 — DB 법령명과 대조하여 정확한 이름만 반환
             all_sources: list[dict] = []
             seen = set()
-            for name, num in re.findall(r"([\w가-힣,\s]+?(?:법|령))\s*제(\d+)조", full_response):
-                key = (name.strip(), num)
-                if key not in seen:
-                    seen.add(key)
-                    all_sources.append({"law_name": name.strip(), "article": num})
+            from app.chat.adk_agent.tools import _get_session as _get_db_session
+            try:
+                from app.core.database import get_session_factory as _gsf
+                from sqlalchemy import text as _sql_text
+                _factory = _gsf()
+                async with _factory() as _sess:
+                    _r = await _sess.execute(_sql_text("SELECT name FROM laws"))
+                    _law_names = {row["name"] for row in _r.mappings().all()}
+            except Exception:
+                _law_names = set()
+
+            for name, num in re.findall(r"([\w가-힣,]+(?:법|령))\s*제(\d+)조", full_response):
+                clean_name = name.strip().lstrip(",").strip()
+                # DB 법령명과 정확히 매칭되는 것만
+                if _law_names and clean_name in _law_names:
+                    key = (clean_name, num)
+                    if key not in seen:
+                        seen.add(key)
+                        all_sources.append({"law_name": clean_name, "article": num})
+                elif not _law_names:
+                    # DB 연결 실패 시 폴백
+                    key = (clean_name, num)
+                    if key not in seen:
+                        seen.add(key)
+                        all_sources.append({"law_name": clean_name, "article": num})
 
         except Exception as e:
             logger.exception("Chat error")
