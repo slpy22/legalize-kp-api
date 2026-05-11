@@ -324,7 +324,7 @@ async def _generate_research_plan(query: str) -> dict:
     """LLM에게 연구 계획을 요청. 어떤 질문이든 동적으로 전략 수립.
 
     Returns: {
-        "pre_read": ["사회주의헌법"],  # 먼저 읽어야 할 법령
+        "pre_read": ["조선민주주의인민공화국 헌법"],  # 먼저 읽어야 할 법령 (구 사회주의헌법)
         "semantic_queries": ["...", "..."],  # 시맨틱 검색 쿼리 목록
         "keyword_patterns": ["...", "..."],  # 키워드 검색 패턴
         "related_law_search": ["형법", "행정처벌법"],  # 추가 탐색할 법

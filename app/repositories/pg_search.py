@@ -20,13 +20,22 @@ class PgSearchRepository:
         """
         # 단어별 ILIKE 조건 생성 (하나라도 포함되면 매칭 — OR)
         # 단, 매칭된 단어 수에 따라 rank를 높여서 AND에 가까운 결과가 상위 노출
+        # 옛이름(frontmatter.옛이름/former_names) 별칭도 함께 매칭
         words = query.split()
-        like_conditions_name = " OR ".join(f"name ILIKE :w{i}" for i in range(len(words)))
+
+        def _name_or_alias(i: int) -> str:
+            return (
+                f"(name ILIKE :w{i}"
+                f" OR (frontmatter->>'옛이름') ILIKE :w{i}"
+                f" OR (frontmatter->>'former_names') ILIKE :w{i})"
+            )
+
+        like_conditions_name = " OR ".join(_name_or_alias(i) for i in range(len(words)))
         like_conditions_text = " OR ".join(f"full_text ILIKE :w{i}" for i in range(len(words)))
 
-        # 매칭된 단어 수 계산 (이름, 본문 각각)
+        # 매칭된 단어 수 계산 (이름/별칭, 본문 각각)
         name_match_count = " + ".join(
-            f"CASE WHEN name ILIKE :w{i} THEN 1 ELSE 0 END" for i in range(len(words))
+            f"CASE WHEN {_name_or_alias(i)} THEN 1 ELSE 0 END" for i in range(len(words))
         )
         text_match_count = " + ".join(
             f"CASE WHEN full_text ILIKE :w{i} THEN 1 ELSE 0 END" for i in range(len(words))

@@ -9,8 +9,26 @@ class LawRepository:
         self.session = session
 
     async def get_by_name(self, name: str) -> dict | None:
+        # 1) 정확 매칭
         result = await self.session.execute(
             text("SELECT * FROM laws WHERE name = :name"), {"name": name}
+        )
+        row = result.mappings().first()
+        if row:
+            return dict(row)
+
+        # 2) 별칭(옛이름) 매칭 — frontmatter JSONB 안에 former_names/옛이름 배열로 저장됨
+        # 두 가지 키 모두 지원
+        import json as _json
+        name_jsonb = _json.dumps([name], ensure_ascii=False)
+        result = await self.session.execute(
+            text(
+                "SELECT * FROM laws "
+                "WHERE frontmatter->'옛이름' @> CAST(:n AS jsonb) "
+                "   OR frontmatter->'former_names' @> CAST(:n AS jsonb) "
+                "LIMIT 1"
+            ),
+            {"n": name_jsonb},
         )
         row = result.mappings().first()
         return dict(row) if row else None
