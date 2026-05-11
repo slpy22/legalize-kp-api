@@ -87,6 +87,7 @@ async def law_endpoint(
     grep: str = Query(None),
     date1: str = Query(None),
     date2: str = Query(None),
+    version: str = Query(None),
     session: AsyncSession = Depends(get_session),
 ):
     t0 = time.time()
@@ -109,7 +110,7 @@ async def law_endpoint(
     elif action == "get":
         if not name:
             return make_response({"error": "name parameter required"}, t0)
-        data = await law_svc.get(name, article=article, grep=grep)
+        data = await law_svc.get(name, article=article, grep=grep, version=version)
         return make_response(data, t0, total=data.get("total_articles", 0))
 
     elif action == "history":
@@ -123,6 +124,22 @@ async def law_endpoint(
             return make_response({"error": "name parameter required"}, t0)
         data = await law_svc.diff(name, date1=date1, date2=date2)
         return make_response(data, t0, total=data.get("total", 0))
+
+    elif action == "versions":
+        # 적재된 버전 메타 목록 (일자/action/source) — list_versions
+        if not name:
+            return make_response({"error": "name parameter required"}, t0)
+        data = await law_svc.list_versions(name)
+        return make_response(data, t0, total=data.get("total", 0))
+
+    elif action == "diff_text":
+        # 두 버전의 본문(articles + full_text) 함께 반환 — 클라이언트가 diff 렌더
+        if not name or not date1 or not date2:
+            return make_response(
+                {"error": "name, date1, date2 parameters required"}, t0
+            )
+        data = await law_svc.diff_text(name, from_date=date1, to_date=date2)
+        return make_response(data, t0)
 
     else:
         return make_response({"error": f"Unknown action: {action}"}, t0)

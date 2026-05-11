@@ -80,28 +80,8 @@ def _jsonb_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
-def parse_markdown_file(file_path: str | Path) -> dict:
-    """
-    Parse a single law Markdown file.
-
-    Returns::
-
-        {
-            "frontmatter": { ... },
-            "full_text": "...",
-            "articles": [
-                {
-                    "article_number": "1",
-                    "article_title": "...",
-                    "content": "...",
-                    "chapter": "제1장 ...",
-                    "position": 0,
-                },
-                ...
-            ],
-        }
-    """
-    text = Path(file_path).read_text(encoding="utf-8")
+def parse_markdown_text(text: str) -> dict:
+    """텍스트 자체를 받아 frontmatter/articles/full_text를 추출."""
 
     # --- frontmatter ---
     frontmatter: dict = {}
@@ -173,6 +153,11 @@ def parse_markdown_file(file_path: str | Path) -> dict:
         "full_text": text,
         "articles": articles,
     }
+
+
+def parse_markdown_file(file_path: str | Path) -> dict:
+    """Read a markdown file from disk and parse it via parse_markdown_text."""
+    return parse_markdown_text(Path(file_path).read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------

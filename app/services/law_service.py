@@ -29,11 +29,42 @@ class LawService:
         }
 
     async def get(
-        self, name: str, article: str | None = None, grep: str | None = None
+        self,
+        name: str,
+        article: str | None = None,
+        grep: str | None = None,
+        version: str | None = None,
     ) -> dict:
         law = await self.law_repo.get_by_name(name)
         if law is None:
             return {"error": f"법률을 찾을 수 없습니다: {name}"}
+
+        # 특정 버전 요청 — law_versions 테이블에서 본문 가져옴
+        if version:
+            v = await self.law_repo.get_version(law["id"], version)
+            if v is None:
+                return {
+                    "error": f"해당 일자의 버전이 없습니다: {name} ({version})",
+                    "available": (await self.law_repo.list_versions(law["id"])),
+                }
+            articles_list = v.get("articles") or []
+            # article/grep 필터 (DB 인덱스 없이 in-memory)
+            if article:
+                articles_list = [a for a in articles_list if str(a.get("article_number")) == str(article)]
+            if grep:
+                articles_list = [a for a in articles_list if grep in (a.get("content") or "")]
+            return {
+                "law": law,
+                "version": {
+                    "version_date": v["version_date"],
+                    "action": v["action"],
+                    "source": v["source"],
+                    "frontmatter": v.get("frontmatter") or {},
+                    "full_text": v.get("full_text") or "",
+                },
+                "articles": articles_list,
+                "total_articles": len(articles_list),
+            }
 
         articles = await self.law_repo.get_articles(
             law["id"], article_number=article, grep=grep
@@ -42,6 +73,56 @@ class LawService:
             "law": law,
             "articles": articles,
             "total_articles": len(articles),
+        }
+
+    async def list_versions(self, name: str) -> dict:
+        """적재된 버전 메타 목록(일자/action/source)."""
+        law = await self.law_repo.get_by_name(name)
+        if law is None:
+            return {"error": f"법률을 찾을 수 없습니다: {name}"}
+        versions = await self.law_repo.list_versions(law["id"])
+        return {
+            "law_name": law["name"],
+            "versions": versions,
+            "total": len(versions),
+        }
+
+    async def diff_text(
+        self, name: str, from_date: str, to_date: str
+    ) -> dict:
+        """두 버전 본문을 함께 반환 — 클라이언트(혹은 후속 endpoint)가 diff 렌더링."""
+        law = await self.law_repo.get_by_name(name)
+        if law is None:
+            return {"error": f"법률을 찾을 수 없습니다: {name}"}
+
+        v_from = await self.law_repo.get_version(law["id"], from_date)
+        v_to = await self.law_repo.get_version(law["id"], to_date)
+
+        available = None
+        if v_from is None or v_to is None:
+            available = await self.law_repo.list_versions(law["id"])
+
+        if v_from is None:
+            return {"error": f"from 버전 없음: {from_date}", "available": available}
+        if v_to is None:
+            return {"error": f"to 버전 없음: {to_date}", "available": available}
+
+        return {
+            "law_name": law["name"],
+            "from": {
+                "version_date": v_from["version_date"],
+                "action": v_from.get("action"),
+                "source": v_from.get("source"),
+                "articles": v_from.get("articles") or [],
+                "full_text": v_from.get("full_text") or "",
+            },
+            "to": {
+                "version_date": v_to["version_date"],
+                "action": v_to.get("action"),
+                "source": v_to.get("source"),
+                "articles": v_to.get("articles") or [],
+                "full_text": v_to.get("full_text") or "",
+            },
         }
 
     async def history(self, name: str) -> dict:

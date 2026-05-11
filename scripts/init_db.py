@@ -66,6 +66,20 @@ CREATE TABLE IF NOT EXISTS amendments (
 );
 """
 
+CREATE_LAW_VERSIONS = """
+CREATE TABLE IF NOT EXISTS law_versions (
+    id            SERIAL PRIMARY KEY,
+    law_id        INT NOT NULL REFERENCES laws(id) ON DELETE CASCADE,
+    version_date  DATE NOT NULL,
+    action        TEXT,
+    source        TEXT,
+    full_text     TEXT,
+    articles      JSONB,
+    frontmatter   JSONB,
+    UNIQUE(law_id, version_date)
+);
+"""
+
 CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_laws_fts       ON laws     USING gin(to_tsvector('simple', full_text));",
     "CREATE INDEX IF NOT EXISTS idx_articles_fts   ON articles USING gin(to_tsvector('simple', content));",
@@ -73,6 +87,8 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_laws_name      ON laws(name);",
     "CREATE INDEX IF NOT EXISTS idx_articles_law_id ON articles(law_id);",
     "CREATE INDEX IF NOT EXISTS idx_amendments_law_id ON amendments(law_id);",
+    "CREATE INDEX IF NOT EXISTS idx_law_versions_law_id ON law_versions(law_id);",
+    "CREATE INDEX IF NOT EXISTS idx_law_versions_date   ON law_versions(version_date);",
 ]
 
 # ---------------------------------------------------------------------------
@@ -119,9 +135,10 @@ async def create_schema(cfg: dict) -> None:
     try:
         async with conn.transaction():
             for ddl, label in [
-                (CREATE_LAWS,      "laws"),
-                (CREATE_ARTICLES,  "articles"),
-                (CREATE_AMENDMENTS,"amendments"),
+                (CREATE_LAWS,        "laws"),
+                (CREATE_ARTICLES,    "articles"),
+                (CREATE_AMENDMENTS,  "amendments"),
+                (CREATE_LAW_VERSIONS,"law_versions"),
             ]:
                 await conn.execute(ddl)
                 print(f"[ok]   Table '{label}' ready.")
