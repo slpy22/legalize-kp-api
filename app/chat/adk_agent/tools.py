@@ -226,6 +226,77 @@ async def search_articles_semantic(query: str) -> str:
         return f"시맨틱 검색 오류: {str(e)[:100]}"
 
 
+async def search_articles_at_version(
+    query: str,
+    law_name: str | None = None,
+    version_date: str | None = None,
+) -> str:
+    """과거 시점의 조문을 시맨틱 검색합니다 (시간 축 질의용).
+
+    "사회주의헌법 2010년에는 ...", "예전 형법에서 ...같은 처벌은 어떻게 되어 있었나"
+    같은 질문에 사용. version_date 가 명시되면 그 시점만, 미명시면 모든 버전을 대상으로
+    가장 관련성 높은 조문을 반환합니다.
+
+    Args:
+        query: 자연어 질문/주제
+        law_name: (선택) 특정 법령명으로 한정. 예: '조선민주주의인민공화국 헌법', '형법'
+        version_date: (선택) 'YYYY-MM-DD' 형식. 미명시 시 모든 적재 버전 대상.
+
+    Returns:
+        매칭된 옛 버전 조문 목록 (법령명·일자·조문번호·발췌)
+    """
+    from app.core.database import get_qdrant
+    from app.core.config import get_config
+    import google.genai as genai
+    import os
+
+    try:
+        client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+        cfg = get_config()
+        model = cfg.get("embedding", {}).get("model", "gemini-embedding-001")
+
+        resp = client.models.embed_content(model=model, contents=query)
+        vector = resp.embeddings[0].values
+
+        from app.repositories.qdrant_search import QdrantSearchRepository
+        qdrant = get_qdrant()
+        # 현행 컬렉션을 가리키지만 search_versions 가 명시적 컬렉션을 사용
+        repo = QdrantSearchRepository(qdrant, "legalize_kp_laws")
+        results = repo.search_versions(
+            vector,
+            limit=15,
+            law_name=law_name,
+            version_date=version_date,
+        )
+        if not results:
+            scope = []
+            if law_name:
+                scope.append(f"law={law_name}")
+            if version_date:
+                scope.append(f"version={version_date}")
+            return (
+                f"'{query}'에 매칭되는 옛 버전 조문이 없습니다."
+                + (f" (필터: {', '.join(scope)})" if scope else "")
+            )
+
+        lines = [f"옛 버전 시맨틱 검색 결과 ({len(results)}건):"]
+        for r in results:
+            ln = r.get("law_name", "")
+            vd = r.get("version_date", "")
+            num = r.get("article_number", "")
+            title = r.get("article_title", "")
+            content = r.get("content_snippet") or ""
+            head = f"[{ln} ({vd}) 제{num}조" + (f" {title}" if title else "") + "]"
+            lines.append(f"{head}\n{content}")
+
+        out = "\n\n".join(lines)
+        if len(out) > 3000:
+            out = out[:3000] + "\n...(이하 생략)"
+        return out
+    except Exception as e:
+        return f"옛 버전 시맨틱 검색 오류: {str(e)[:100]}"
+
+
 async def compare_laws(kp_name: str) -> str:
     """북한법과 대응하는 남한법의 매핑 정보를 조회합니다.
 
