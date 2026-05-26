@@ -88,6 +88,7 @@ async def law_endpoint(
     date1: str = Query(None),
     date2: str = Query(None),
     version: str = Query(None),
+    threshold: float = Query(0.78),
     session: AsyncSession = Depends(get_session),
 ):
     t0 = time.time()
@@ -139,6 +140,28 @@ async def law_endpoint(
                 {"error": "name, date1, date2 parameters required"}, t0
             )
         data = await law_svc.diff_text(name, from_date=date1, to_date=date2)
+        return make_response(data, t0)
+
+    elif action == "diff_semantic":
+        # 의미(임베딩) 기반 조문 매칭 → 신설/삭제/변경/동일 분류
+        if not name or not date1 or not date2:
+            return make_response(
+                {"error": "name, date1, date2 parameters required"}, t0
+            )
+        data = await law_svc.diff_semantic(
+            name, from_date=date1, to_date=date2, match_threshold=threshold
+        )
+        return make_response(data, t0, total=len(data.get("pairs", [])))
+
+    elif action == "diff_report":
+        # 의미론적 변화 종합 리포트 (LLM 생성 마크다운)
+        if not name or not date1 or not date2:
+            return make_response(
+                {"error": "name, date1, date2 parameters required"}, t0
+            )
+        data = await law_svc.diff_report(
+            name, from_date=date1, to_date=date2, match_threshold=threshold
+        )
         return make_response(data, t0)
 
     else:

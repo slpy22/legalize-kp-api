@@ -117,6 +117,7 @@ async def chat_endpoint(request: Request):
 
             full_response = ""
             step_count = 0
+            streamed_any = False  # partial 조각을 사용자에게 보냈는지
             tool_results_buffer: list[str] = []  # 폴백 종합용
 
             # ADK Runner 실행 — 이벤트 스트리밍
@@ -156,12 +157,27 @@ async def chat_endpoint(request: Request):
                             "step": step_count,
                         })
 
-                # 텍스트 응답 (최종 답변 — function_call/response가 없는 이벤트의 텍스트만)
+                # 텍스트 응답 (function_call/response가 없는 이벤트의 텍스트만)
+                # ADK StreamingMode.SSE 는 partial=True 조각들을 증분으로 보낸 뒤,
+                # 마지막에 partial=False 로 전체 텍스트를 한 번 더 보낸다. 둘 다 yield 하면
+                # 답변이 2배로 중복되므로, 조각(partial)만 사용자에게 스트리밍하고
+                # 최종 집계 이벤트는 full_response 확정용으로만 쓴다.
                 if not fc_list and not fr_list and event.content and event.content.parts:
-                    for part in event.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            full_response += part.text
-                            yield _sse("token", {"text": part.text})
+                    text = "".join(
+                        getattr(p, "text", "") or "" for p in event.content.parts
+                    )
+                    if text:
+                        is_partial = bool(getattr(event, "partial", False))
+                        if is_partial:
+                            streamed_any = True
+                            full_response += text
+                            yield _sse("token", {"text": text})
+                        else:
+                            # 최종 집계 이벤트: 전체 텍스트로 확정 (중복 yield 방지)
+                            full_response = text
+                            if not streamed_any:
+                                # 스트리밍 조각이 없었던 경우만 직접 전송
+                                yield _sse("token", {"text": text})
 
             # 빈 응답 폴백: ADK가 텍스트를 생성하지 못한 경우
             # → 세션에서 tool result를 추출하여 별도 LLM 종합 호출

@@ -47,6 +47,44 @@ class QdrantSearchRepository:
             # Collection may not exist yet (embeddings still building)
             return []
 
+    def get_version_vectors(
+        self,
+        version_id: int,
+        collection: str = "legalize_kp_law_versions",
+    ) -> dict[str, list[float]]:
+        """주어진 version_id 의 모든 조문 벡터를 {article_number: vector} 로 반환.
+
+        의미적 신구비교(diff_semantic)에서 이미 적재된 임베딩을 재사용하기 위함.
+        """
+        out: dict[str, list[float]] = {}
+        try:
+            offset = None
+            while True:
+                points, offset = self.client.scroll(
+                    collection_name=collection,
+                    scroll_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="version_id",
+                                match=models.MatchValue(value=int(version_id)),
+                            )
+                        ]
+                    ),
+                    limit=500,
+                    with_vectors=True,
+                    with_payload=True,
+                    offset=offset,
+                )
+                for p in points:
+                    num = (p.payload or {}).get("article_number")
+                    if num is not None and p.vector is not None:
+                        out[str(num)] = p.vector
+                if offset is None:
+                    break
+        except Exception:
+            return {}
+        return out
+
     def search_versions(
         self,
         query_vector: list[float],

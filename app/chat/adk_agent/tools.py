@@ -523,8 +523,13 @@ async def deep_search(query: str, topic: str = "") -> str:
             except Exception as e:
                 logger.warning(f"Semantic search failed: {e}")
 
-        # ── Step 4: 키워드 검색 (LLM 생성 패턴) ──
-        kw_patterns = plan.get("keyword_patterns", [])
+        # ── Step 4: 키워드 검색 (LLM 생성 패턴 + 원본 쿼리 명사 안전망) ──
+        kw_patterns = list(plan.get("keyword_patterns", []))
+        # LLM이 핵심 단어를 누락하거나 의미를 오해(예: '성령'을 종교어로)한 경우 대비:
+        # 사용자 쿼리의 핵심 명사를 키워드 패턴에 강제 포함한다.
+        for _n in _extract_nouns(query):
+            if len(_n) >= 2 and _n not in kw_patterns:
+                kw_patterns.append(_n)
         if kw_patterns:
             async with factory() as session:
                 for p in kw_patterns[:10]:
