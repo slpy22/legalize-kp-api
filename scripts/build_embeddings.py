@@ -91,7 +91,8 @@ def main() -> None:
 
     model_name       = emb_cfg.get("model",      "text-embedding-004")
     vector_dimension = int(emb_cfg.get("dimension", 768))
-    batch_size       = int(emb_cfg.get("batch_size", 100))
+    # 환경변수로 batch_size override 가능 — 키 quota 가 낮을 때 보수적으로 (예: 5)
+    batch_size       = int(os.environ.get("EMBED_BATCH_SIZE", emb_cfg.get("batch_size", 100)))
     collection_name  = qdrant_cfg.get("collection", "legalize_kp_laws")
     qdrant_host      = qdrant_cfg.get("host", "localhost")
     qdrant_port      = int(qdrant_cfg.get("port", 6333))
@@ -124,7 +125,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     qdrant = QdrantClient(host=qdrant_host, port=qdrant_port)
 
+    # --reset: 기존 컬렉션을 통째로 비우고 재구축(전체 재임베딩). 미지정 시 증분 모드.
+    # 주의: 증분 모드는 article id 로 skip 하므로, Postgres 재적재로 id가 재배정된
+    # 경우 옛 벡터가 orphan 으로 남는다. 전체 재구축 시에는 반드시 --reset 사용.
+    reset = "--reset" in sys.argv
     existing = [c.name for c in qdrant.get_collections().collections]
+    if reset and collection_name in existing:
+        print(f"[info] --reset: dropping existing collection '{collection_name}' "
+              f"for a clean full rebuild.")
+        qdrant.delete_collection(collection_name)
+        existing = [c.name for c in qdrant.get_collections().collections]
     if collection_name not in existing:
         print(f"[info] Creating Qdrant collection '{collection_name}' "
               f"(dim={vector_dimension}, distance=COSINE) ...")
@@ -163,8 +173,9 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 6. Batch embed and upsert with rate-limit handling
     # ------------------------------------------------------------------
-    MAX_RETRIES = 3
-    RETRY_WAIT  = 60  # seconds to wait on 429
+    # 키 quota 가 낮으면 환경변수로 더 보수적 (재시도↑, 대기↑)
+    MAX_RETRIES = int(os.environ.get("EMBED_MAX_RETRIES", 3))
+    RETRY_WAIT  = int(os.environ.get("EMBED_RETRY_WAIT", 60))
 
     print(f"[info] Starting embedding in batches of {batch_size} ...")
     upserted = 0
@@ -232,9 +243,9 @@ def main() -> None:
             f"ETA={eta_sec:.0f}s"
         )
 
-        # Rate-limit courtesy: sleep between batches
+        # Rate-limit courtesy: sleep between batches (환경변수로 조정 가능)
         if batch_end < new_total:
-            time.sleep(1)
+            time.sleep(float(os.environ.get("EMBED_BATCH_SLEEP", 1)))
 
     # ------------------------------------------------------------------
     # 7. Final report

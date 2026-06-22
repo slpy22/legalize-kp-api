@@ -122,7 +122,7 @@ def main() -> None:
 
     model_name = emb_cfg.get("model", "text-embedding-004")
     vector_dimension = int(emb_cfg.get("dimension", 768))
-    batch_size = int(emb_cfg.get("batch_size", 100))
+    batch_size = int(os.environ.get("EMBED_BATCH_SIZE", emb_cfg.get("batch_size", 100)))
     qdrant_host = qdrant_cfg.get("host", "localhost")
     qdrant_port = int(qdrant_cfg.get("port", 6333))
 
@@ -153,8 +153,8 @@ def main() -> None:
     )
     print(f"[ok] collection '{COLLECTION_NAME}' created (dim={vector_dimension}).")
 
-    MAX_RETRIES = 3
-    RETRY_WAIT = 60
+    MAX_RETRIES = int(os.environ.get("EMBED_MAX_RETRIES", 3))
+    RETRY_WAIT = int(os.environ.get("EMBED_RETRY_WAIT", 60))
 
     upserted = 0
     start = time.time()
@@ -206,7 +206,7 @@ def main() -> None:
         eta = (total - upserted) / rate if rate > 0 else 0
         print(f"[progress] {upserted:>6}/{total}  elapsed={elapsed:.0f}s  rate={rate:.1f}/s  ETA={eta:.0f}s")
         if s + batch_size < total:
-            time.sleep(1)
+            time.sleep(float(os.environ.get("EMBED_BATCH_SLEEP", 1)))
 
     # version_date 필터를 빠르게 하기 위한 인덱스 — 키워드 인덱스로 보존
     try:
@@ -230,7 +230,7 @@ def main() -> None:
         print(f"[warn] payload index creation failed: {e}")
 
     print()
-    print(f"[done] Finished in {time.time()-start:.1f}s — collection '{COLLECTION_NAME}' has {upserted:,} points.")
+    print(f"[done] Finished in {time.time()-start:.1f}s - collection '{COLLECTION_NAME}' has {upserted:,} points.")
 
 
 if __name__ == "__main__":
