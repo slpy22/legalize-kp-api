@@ -8,12 +8,15 @@ _kr_to_kp: dict[str, str] | None = None
 
 
 def _load_terms() -> dict[str, str]:
-    """config에서 repo_path를 읽어 term_pairs.json을 로드."""
+    """config의 compare_path(없으면 repo_path/compare)에서 term_pairs.json을 로드."""
     from app.core.config import get_config
 
     cfg = get_config()
-    repo_path = cfg.get("data", {}).get("repo_path", ".")
-    term_path = Path(repo_path) / "compare" / "term_pairs.json"
+    data_cfg = cfg.get("data", {})
+    compare_dir = data_cfg.get("compare_path") or str(
+        Path(data_cfg.get("repo_path", ".")) / "compare"
+    )
+    term_path = Path(compare_dir) / "term_pairs.json"
 
     mapping: dict[str, str] = {}
     try:

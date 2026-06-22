@@ -18,6 +18,8 @@ embedding:
 data:
   repo_path: "/data/legalize-kp"
   kp_dir: "/data/legalize-kp/kp"
+  # compare 데이터는 api 이미지에 포함됨(Dockerfile COPY . . → /app/data/compare)
+  compare_path: "/app/data/compare"
 external:
   beopmang_base_url: "https://api.beopmang.org/api/v4"
   lawgo_base_url: "https://www.law.go.kr/DRF"

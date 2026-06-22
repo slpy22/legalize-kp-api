@@ -18,6 +18,9 @@ embedding:
 data:
   repo_path: "E:/004_북한법/legalize-kp"
   kp_dir: "E:/004_북한법/legalize-kp/kp"
+  # 남북비교 데이터(law_mappings/term_pairs)는 소비처인 api 안에 둔다.
+  # 미설정 시 코드에서 repo_path/compare 로 폴백.
+  compare_path: "E:/004_북한법/legalize-kp-api/data/compare"
 external:
   beopmang_base_url: "https://api.beopmang.org/api/v4"
   lawgo_base_url: "https://www.law.go.kr/DRF"

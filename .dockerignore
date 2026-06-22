@@ -1,0 +1,18 @@
+# 빌드/캐시 산출물
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# 비밀키 (GOOGLE_API_KEY 는 compose environment 로 주입)
+.env
+
+# 버전관리
+.git/
+.gitignore
+
+# 대용량 재생성 산출물(런타임 불필요 — 필요 시 pipeline 으로 재생성)
+data/versions.json
+
+# 테스트 스크립트(런타임 불필요)
+test_*.py

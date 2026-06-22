@@ -34,8 +34,12 @@ _CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
 
 
 def _compare_dir(cfg: dict) -> Path:
-    """Return the compare/ directory derived from config repo_path."""
-    repo_path = cfg.get("data", {}).get("repo_path", "E:/004_북한법/legalize-kp")
+    """Return the compare/ directory: config data.compare_path, else repo_path/compare."""
+    data = cfg.get("data", {})
+    compare_path = data.get("compare_path")
+    if compare_path:
+        return Path(compare_path)
+    repo_path = data.get("repo_path", "E:/004_북한법/legalize-kp")
     return Path(repo_path) / "compare"
 
 

@@ -1,0 +1,1729 @@
+{
+  "version": "3.2.0",
+  "total": 287,
+  "verified_count": 192,
+  "terms": [
+    {
+      "kp": "가공품",
+      "kr": "가공식품",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "간석지",
+      "kr": "간척지",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "간호원",
+      "kr": "간호사",
+      "category": "보건",
+      "verified": false
+    },
+    {
+      "kp": "갈음",
+      "kr": "대체",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "갑문",
+      "kr": "갑문(수문)",
+      "category": "교통",
+      "verified": true
+    },
+    {
+      "kp": "강반",
+      "kr": "강가",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "강직",
+      "kr": "강등",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "개발구",
+      "kr": "경제특구",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "건설물",
+      "kr": "건축물, 시설물",
+      "category": "건설",
+      "verified": false
+    },
+    {
+      "kp": "검열",
+      "kr": "검사",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "검찰소",
+      "kr": "검찰청",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "결심",
+      "kr": "결정",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "경리",
+      "kr": "경영",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "경영활동",
+      "kr": "사업활동",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "계선",
+      "kr": "경계선",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "공민",
+      "kr": "국민",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "공보",
+      "kr": "관보",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "공소 (控訴)",
+      "kr": "공소 (公訴)",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "공업",
+      "kr": "산업",
+      "category": "산업",
+      "verified": false
+    },
+    {
+      "kp": "공업도안",
+      "kr": "산업디자인",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "공화국령역",
+      "kr": "국가영토",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "교통지도원",
+      "kr": "교통경찰",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "교화소",
+      "kr": "교도소",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "구류장",
+      "kr": "유치장",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "국가 소유",
+      "kr": "국유",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "국가예산",
+      "kr": "국가예산",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "국방위원회",
+      "kr": "국방부",
+      "category": "군사",
+      "verified": true
+    },
+    {
+      "kp": "국정가격",
+      "kr": "공정가격",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "군인민위원회",
+      "kr": "군수(기초자치단체장)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "규격",
+      "kr": "표준",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "극력",
+      "kr": "극히",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "기술보장",
+      "kr": "기술지원",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "기업소",
+      "kr": "기업",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "기업전략",
+      "kr": "경영전략",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "꾸리다",
+      "kr": "구성하다",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "나라",
+      "kr": "국가",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "내각",
+      "kr": "국무회의(내각)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "네트",
+      "kr": "네트워크",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "녀성",
+      "kr": "여성",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "년로자",
+      "kr": "노인",
+      "category": "사회",
+      "verified": true
+    },
+    {
+      "kp": "년한",
+      "kr": "기한",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "념려",
+      "kr": "우려",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "농장",
+      "kr": "농장(집단농장)",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "농장원",
+      "kr": "농민",
+      "category": "농업",
+      "verified": false
+    },
+    {
+      "kp": "뇨소",
+      "kr": "요소",
+      "category": "과학",
+      "verified": true
+    },
+    {
+      "kp": "다그치다",
+      "kr": "촉진하다",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "담보",
+      "kr": "보장",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "담보금",
+      "kr": "보증금",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "담보처분",
+      "kr": "담보실행",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "대상물",
+      "kr": "대상, 목적물, 시설물",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "대외경제",
+      "kr": "국제경제",
+      "category": "외교",
+      "verified": true
+    },
+    {
+      "kp": "도메인명",
+      "kr": "도메인 이름",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "도시경영",
+      "kr": "도시관리",
+      "category": "건설",
+      "verified": true
+    },
+    {
+      "kp": "도시미화",
+      "kr": "도시미관",
+      "category": "건설",
+      "verified": true
+    },
+    {
+      "kp": "도안",
+      "kr": "의장",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "도인민위원회",
+      "kr": "도지사(광역자치단체장)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "독립채산제",
+      "kr": "독립채산제",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "돈자리",
+      "kr": "계좌",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "라선",
+      "kr": "나선",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "락제",
+      "kr": "낙제",
+      "category": "교육",
+      "verified": false
+    },
+    {
+      "kp": "람용",
+      "kr": "남용",
+      "category": "사회",
+      "verified": false
+    },
+    {
+      "kp": "략탈",
+      "kr": "약탈",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "량곡",
+      "kr": "양곡",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "량식",
+      "kr": "양식",
+      "category": "사회",
+      "verified": false
+    },
+    {
+      "kp": "량정",
+      "kr": "양곡관리",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "량형",
+      "kr": "양형",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "력량",
+      "kr": "역량",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "력사",
+      "kr": "역사",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "련결",
+      "kr": "연결",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "련계",
+      "kr": "연계",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "련관",
+      "kr": "관련",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "련합",
+      "kr": "연합",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "렬차",
+      "kr": "열차",
+      "category": "교통",
+      "verified": true
+    },
+    {
+      "kp": "렴가",
+      "kr": "염가",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "령도",
+      "kr": "지도",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "령사",
+      "kr": "영사",
+      "category": "외교",
+      "verified": false
+    },
+    {
+      "kp": "령수증",
+      "kr": "영수증",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "령역",
+      "kr": "영역",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "령토",
+      "kr": "영토",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "례외",
+      "kr": "예외",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "로동",
+      "kr": "노동",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "로동교양처벌",
+      "kr": "교정처분",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "로동교화형",
+      "kr": "징역형",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "로동단련",
+      "kr": "노동교화",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "로동단련형",
+      "kr": "노역형",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "로동보수",
+      "kr": "노동보수(임금)",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "로동보호",
+      "kr": "노동보호(산업안전)",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "로동정량",
+      "kr": "노동정량(작업량)",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "로력",
+      "kr": "노동력",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "로선",
+      "kr": "노선",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "록",
+      "kr": "녹",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "론의",
+      "kr": "논의",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "료금",
+      "kr": "요금",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "료리",
+      "kr": "요리",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "료법",
+      "kr": "요법",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "료양",
+      "kr": "요양",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "료해",
+      "kr": "요해",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "루설",
+      "kr": "누설",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "류사",
+      "kr": "유사",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "류산",
+      "kr": "유산",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "류실",
+      "kr": "분실",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "류용",
+      "kr": "유용",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "류입",
+      "kr": "유입",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "류통",
+      "kr": "유통",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "류포",
+      "kr": "유포",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "류해",
+      "kr": "유해",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "류행",
+      "kr": "유행",
+      "category": "사회",
+      "verified": false
+    },
+    {
+      "kp": "륙상",
+      "kr": "육상",
+      "category": "체육",
+      "verified": false
+    },
+    {
+      "kp": "률",
+      "kr": "율",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "리",
+      "kr": "이",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "리자",
+      "kr": "관리자",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "린접",
+      "kr": "인접",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "림산",
+      "kr": "임산",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "림수",
+      "kr": "임수",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "림시",
+      "kr": "임시",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "림야",
+      "kr": "임야",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "림업",
+      "kr": "임업",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "립법",
+      "kr": "입법",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "립양",
+      "kr": "입양",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "립회",
+      "kr": "입회",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "마약",
+      "kr": "마약",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "망봉사",
+      "kr": "인터넷서비스",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "무기로동교화",
+      "kr": "무기징역",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "무보수로동",
+      "kr": "무급노동(벌금형)",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "무현금류통",
+      "kr": "비현금결제",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "문건",
+      "kr": "문서",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "미풍량속",
+      "kr": "미풍양속",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "민사쟁의",
+      "kr": "민사분쟁",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "민용",
+      "kr": "민간",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "민족유산",
+      "kr": "문화유산",
+      "category": "교육",
+      "verified": true
+    },
+    {
+      "kp": "바다밭",
+      "kr": "양식장",
+      "category": "수산",
+      "verified": false
+    },
+    {
+      "kp": "바로정하다",
+      "kr": "바로잡다",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "바로하다",
+      "kr": "올바르게하다",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "발명권",
+      "kr": "특허권",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "배등록",
+      "kr": "선박등록",
+      "category": "교통",
+      "verified": true
+    },
+    {
+      "kp": "법률사업",
+      "kr": "법률사무",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "변호원",
+      "kr": "변호사",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "보관고",
+      "kr": "보관소",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "보위",
+      "kr": "보호",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "보장금",
+      "kr": "보증금",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "봉사",
+      "kr": "서비스",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "부림소",
+      "kr": "역우",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "부문",
+      "kr": "분야",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "북남",
+      "kr": "남북",
+      "category": "외교",
+      "verified": false
+    },
+    {
+      "kp": "비루스",
+      "kr": "바이러스",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "비법",
+      "kr": "불법",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "비상방역",
+      "kr": "긴급방역",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "뻐스",
+      "kr": "버스",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "사회급양",
+      "kr": "외식산업",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "사회주의경쟁",
+      "kr": "생산성경쟁",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "사회주의재산",
+      "kr": "국유재산",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "사회주의적 소유",
+      "kr": "공공 소유",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "살림집",
+      "kr": "주택",
+      "category": "건설",
+      "verified": true
+    },
+    {
+      "kp": "상설회의",
+      "kr": "상임위원회",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "상속자",
+      "kr": "상속인",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "생산물",
+      "kr": "제품",
+      "category": "산업",
+      "verified": false
+    },
+    {
+      "kp": "생산지휘",
+      "kr": "생산관리",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "선차",
+      "kr": "우선",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "선차적요구",
+      "kr": "최우선과제",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "성",
+      "kr": "부(부처)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "성원",
+      "kr": "구성원",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "수로",
+      "kr": "수로(항로)",
+      "category": "교통",
+      "verified": true
+    },
+    {
+      "kp": "수매",
+      "kr": "매입",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "수속",
+      "kr": "절차",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "수자",
+      "kr": "숫자",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "수자화",
+      "kr": "디지털화",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "수정보충",
+      "kr": "개정",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "시공단위",
+      "kr": "시공업체, 시공사",
+      "category": "건설",
+      "verified": false
+    },
+    {
+      "kp": "시달",
+      "kr": "시행",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "시인민위원회",
+      "kr": "시장(기초자치단체장)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "심사비준",
+      "kr": "심사·승인",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "심판원",
+      "kr": "재판관",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "싸이트",
+      "kr": "사이트",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "쏘프트웨어",
+      "kr": "소프트웨어",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "악성프로그람",
+      "kr": "악성프로그램(멀웨어)",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "안전기관",
+      "kr": "경찰기관",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "앞세우다",
+      "kr": "우선시하다",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "약초",
+      "kr": "한약재",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "양어",
+      "kr": "양식(수산)",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "엄중경고",
+      "kr": "중징계",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "에네르기",
+      "kr": "에너지",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "영예",
+      "kr": "명예",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "예심",
+      "kr": "수사",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "오염물질",
+      "kr": "오염물질",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "외국투자가",
+      "kr": "외국인투자자",
+      "category": "외교",
+      "verified": true
+    },
+    {
+      "kp": "외국투자기업",
+      "kr": "외국인투자기업",
+      "category": "외교",
+      "verified": true
+    },
+    {
+      "kp": "운영기",
+      "kr": "운영기관",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "운영체계",
+      "kr": "운영체제",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "운전봉사원",
+      "kr": "운전기사",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "운전수",
+      "kr": "운전자, 운전사",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "원림",
+      "kr": "조경",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "원림록화",
+      "kr": "조경녹화",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "원부",
+      "kr": "대장, 원본",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "원산지명",
+      "kr": "원산지표시",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "원쑤",
+      "kr": "원수/적",
+      "category": "정치",
+      "verified": false
+    },
+    {
+      "kp": "위생방역",
+      "kr": "방역(감염병예방)",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "유기로동교화",
+      "kr": "유기징역",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "의약품",
+      "kr": "의약품",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "이바지",
+      "kr": "기여",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "인민",
+      "kr": "국민",
+      "category": "정치",
+      "verified": false
+    },
+    {
+      "kp": "인민검찰소",
+      "kr": "검찰청",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "인민경제계획",
+      "kr": "경제개발계획",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "인민반",
+      "kr": "주민조직",
+      "category": "사회",
+      "verified": false
+    },
+    {
+      "kp": "인민보안",
+      "kr": "경찰",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "인민봉사",
+      "kr": "공공서비스",
+      "category": "행정",
+      "verified": true
+    },
+    {
+      "kp": "인민위원회",
+      "kr": "지방자치단체",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "인민재판소",
+      "kr": "법원",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "일군",
+      "kr": "간부",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "일안",
+      "kr": "일환",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "입사",
+      "kr": "입주",
+      "category": "건설",
+      "verified": false
+    },
+    {
+      "kp": "자각적",
+      "kr": "자발적",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "자격박탈형",
+      "kr": "자격상실형",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "자료기지",
+      "kr": "데이터베이스",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "자연에네르기",
+      "kr": "자연 에너지",
+      "category": "과학",
+      "verified": false
+    },
+    {
+      "kp": "자위적",
+      "kr": "자주적",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "자위적핵보유",
+      "kr": "핵보유",
+      "category": "군사",
+      "verified": true
+    },
+    {
+      "kp": "자재공급",
+      "kr": "물자조달",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "작물종자",
+      "kr": "농작물종자",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "장악",
+      "kr": "파악",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "재산몰수형",
+      "kr": "재산몰수",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "재판소",
+      "kr": "법원",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "적십자회",
+      "kr": "적십자사",
+      "category": "사회",
+      "verified": true
+    },
+    {
+      "kp": "전염병",
+      "kr": "감염병",
+      "category": "보건",
+      "verified": true
+    },
+    {
+      "kp": "전자상업",
+      "kr": "전자상거래",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "전자우편",
+      "kr": "이메일",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "전자인증",
+      "kr": "전자인증(전자서명)",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "전자지불",
+      "kr": "전자결제",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "정거장",
+      "kr": "역, 정류장",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "정령",
+      "kr": "법령",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "정보식별부호",
+      "kr": "식별코드",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "정소",
+      "kr": "제소",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "정형",
+      "kr": "상황",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "정화수",
+      "kr": "정수",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "제때에",
+      "kr": "적시에",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "조선",
+      "kr": "한국",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "조업",
+      "kr": "영업",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "조직",
+      "kr": "업체, 기업, 단체",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "죄상",
+      "kr": "죄목",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "죄증",
+      "kr": "증거",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "주체",
+      "kr": "주체(연호)",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "중앙기관",
+      "kr": "중앙행정기관",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "지도통제",
+      "kr": "감독관리",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "지령",
+      "kr": "명령",
+      "category": "일반",
+      "verified": false
+    },
+    {
+      "kp": "지불",
+      "kr": "지급",
+      "category": "경제",
+      "verified": false
+    },
+    {
+      "kp": "지적소유권",
+      "kr": "지적재산권",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "집체",
+      "kr": "단체",
+      "category": "사회",
+      "verified": false
+    },
+    {
+      "kp": "채택",
+      "kr": "제정",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "철길",
+      "kr": "철로, 선로",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "철도원",
+      "kr": "철도 직원, 역무원",
+      "category": "교통",
+      "verified": false
+    },
+    {
+      "kp": "철직",
+      "kr": "파면",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "체계",
+      "kr": "시스템",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "체신",
+      "kr": "통신",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "총화",
+      "kr": "종합평가",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "최고인민회의",
+      "kr": "국회",
+      "category": "정치",
+      "verified": true
+    },
+    {
+      "kp": "콤퓨터",
+      "kr": "컴퓨터",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "콤퓨터망",
+      "kr": "컴퓨터네트워크",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "콤퓨터비루스",
+      "kr": "컴퓨터바이러스",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "콤퓨터죄",
+      "kr": "컴퓨터 범죄",
+      "category": "IT",
+      "verified": false
+    },
+    {
+      "kp": "탄원",
+      "kr": "청원",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "테로",
+      "kr": "테러",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "토지리용증",
+      "kr": "토지이용허가증",
+      "category": "건설",
+      "verified": true
+    },
+    {
+      "kp": "틀어쥐다",
+      "kr": "중시하다",
+      "category": "일반",
+      "verified": true
+    },
+    {
+      "kp": "판정",
+      "kr": "판결",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "페가스",
+      "kr": "폐가스",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "페기",
+      "kr": "폐기",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "페설",
+      "kr": "폐설",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "페설물",
+      "kr": "폐기물",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "페수",
+      "kr": "폐수",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "페업",
+      "kr": "폐업",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "편의봉사망",
+      "kr": "편의시설네트워크",
+      "category": "건설",
+      "verified": true
+    },
+    {
+      "kp": "품질감독",
+      "kr": "품질관리",
+      "category": "산업",
+      "verified": true
+    },
+    {
+      "kp": "프로그람",
+      "kr": "프로그램",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "피소인",
+      "kr": "피고인",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "합영",
+      "kr": "합작투자",
+      "category": "외교",
+      "verified": true
+    },
+    {
+      "kp": "합작",
+      "kr": "합작사업",
+      "category": "외교",
+      "verified": true
+    },
+    {
+      "kp": "해당기관",
+      "kr": "관할기관",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "해사감독",
+      "kr": "해사안전감독",
+      "category": "교통",
+      "verified": true
+    },
+    {
+      "kp": "해안반",
+      "kr": "해안가",
+      "category": "환경",
+      "verified": false
+    },
+    {
+      "kp": "해임",
+      "kr": "해임",
+      "category": "법률",
+      "verified": true
+    },
+    {
+      "kp": "핵무력",
+      "kr": "핵전력",
+      "category": "군사",
+      "verified": true
+    },
+    {
+      "kp": "협동농장",
+      "kr": "협동조합농장",
+      "category": "농업",
+      "verified": true
+    },
+    {
+      "kp": "협동단체",
+      "kr": "협동조합",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "협동재산",
+      "kr": "협동조합재산",
+      "category": "경제",
+      "verified": true
+    },
+    {
+      "kp": "혼인등록",
+      "kr": "혼인신고",
+      "category": "법률",
+      "verified": false
+    },
+    {
+      "kp": "홈페지",
+      "kr": "홈페이지",
+      "category": "IT",
+      "verified": true
+    },
+    {
+      "kp": "환경보호",
+      "kr": "환경보전",
+      "category": "환경",
+      "verified": true
+    },
+    {
+      "kp": "회계검증",
+      "kr": "회계감사",
+      "category": "경제",
+      "verified": true
+    }
+  ]
+}

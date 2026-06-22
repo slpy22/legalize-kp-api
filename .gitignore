@@ -7,3 +7,6 @@ build/
 .venv/
 *.cpython-*.pyc
 server.log
+
+# pipeline --emit-versions 산출물(11MB, 재생성됨)
+data/versions.json
