@@ -1,10 +1,15 @@
 """챗봇 API — Google ADK 에이전트 기반."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 import re
+from urllib.parse import quote
 
+import httpx
+import websockets
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
@@ -28,6 +33,152 @@ _runner = Runner(
 
 APP_NAME = "nk_law_chat"
 USER_ID = "web_user"
+
+
+# ---------------------------------------------------------------------------
+# 자체 에이전트(self) — Claude Code Session Manager 브리지
+#
+# select 에서 "자체 에이전트"(llm="self") 선택 시, Gemini/ADK 대신 로컬 호스트에
+# 떠 있는 Session Manager(기본 5100)의 라벨 세션을 재개해 처리한다.
+#   1) GET  {SM_BASE}/api/v1/sessions?label=<라벨>  → session_id 해석
+#   2) WS   {SM_WS}/api/v1/resume/{id}?token=..&skip=1 → prompt 1턴 전송
+#   3) claude stream-json 이벤트(assistant/result)를 기존 SSE(token/tool_call/done)로 변환
+#
+# 컨테이너에서 호스트로 나가므로 기본 베이스는 host.docker.internal 이고,
+# 비루프백 요청이라 SM_API_TOKEN 이 필요하다(Session Manager 측도 토큰 설정 필수).
+# ---------------------------------------------------------------------------
+SM_BASE = os.environ.get("SM_RESUME_BASE", "http://host.docker.internal:5100").rstrip("/")
+SM_TOKEN = os.environ.get("SM_API_TOKEN", "")
+SM_LABEL = os.environ.get("SM_AGENT_LABEL", "북한법전문가")
+
+
+def _sm_ws_base() -> str:
+    if SM_BASE.startswith("https://"):
+        return "wss://" + SM_BASE[len("https://"):]
+    if SM_BASE.startswith("http://"):
+        return "ws://" + SM_BASE[len("http://"):]
+    return "ws://" + SM_BASE
+
+
+async def _sm_find_session_id() -> str | None:
+    """SM_LABEL 을 라벨(tags) 또는 표시이름(name)으로 갖는 세션의 id 를 반환.
+
+    SM 은 라벨(tags 배열)과 표시이름(name)이 별개다. 먼저 라벨 필터로 조회하고,
+    없으면 전체 목록에서 표시이름이 일치하는 가장 최근 세션을 찾는다.
+    (사용자는 둘 중 무엇으로 지정했든 'SM_AGENT_LABEL' 값으로 인식한다.)
+    """
+    headers = {"Authorization": f"Bearer {SM_TOKEN}"} if SM_TOKEN else {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        # 1) 라벨(tags) 매칭
+        r = await client.get(
+            f"{SM_BASE}/api/v1/sessions",
+            params={"label": SM_LABEL, "limit": 1},
+            headers=headers,
+        )
+        r.raise_for_status()
+        sessions = r.json().get("sessions", [])
+        if sessions:
+            return sessions[0]["session_id"]
+
+        # 2) 표시이름(name) 매칭 폴백 (목록은 ended_at 최신순 정렬돼 옴)
+        r = await client.get(
+            f"{SM_BASE}/api/v1/sessions",
+            params={"limit": 0},
+            headers=headers,
+        )
+        r.raise_for_status()
+        for s in r.json().get("sessions", []):
+            if s.get("label_name") == SM_LABEL or SM_LABEL in (s.get("labels") or []):
+                return s["session_id"]
+    return None
+
+
+def _extract_sources_simple(text: str) -> list[dict]:
+    """응답 텍스트에서 '○○법 제N조' 인용을 추출(중복 제거)."""
+    out: list[dict] = []
+    seen: set = set()
+    for name, num in re.findall(r"([\w가-힣,]+(?:법|령))\s*제(\d+)조", text):
+        clean = name.strip().lstrip(",").strip()
+        key = (clean, num)
+        if key not in seen:
+            seen.add(key)
+            out.append({"law_name": clean, "article": num})
+    return out
+
+
+async def _stream_self_agent(message: str, prev_session_id: str | None):
+    """자체 에이전트(SM 세션) 경로 — SSE 문자열을 순차 yield 한다."""
+    # 1) 대상 세션 해석
+    try:
+        sid = await _sm_find_session_id()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("SM session lookup failed: %s", e)
+        yield _sse("error", {"message": f"세션 매니저 연결 실패: {str(e)[:180]}"})
+        yield _sse("done", {"sources": [], "session_id": prev_session_id or ""})
+        return
+
+    if not sid:
+        yield _sse("error", {"message": f"'{SM_LABEL}' 라벨/이름의 세션을 찾을 수 없습니다. SM에서 세션을 만들고 라벨 또는 이름을 지정하세요."})
+        yield _sse("done", {"sources": [], "session_id": prev_session_id or ""})
+        return
+
+    yield _sse("session", {"session_id": sid})
+    yield _sse("thinking", {"text": "자체 에이전트에 연결하는 중..."})
+
+    # 2) WS 재개 + 프롬프트 전송
+    tok = f"&token={quote(SM_TOKEN)}" if SM_TOKEN else ""
+    url = f"{_sm_ws_base()}/api/v1/resume/{sid}?skip=1{tok}"
+    full_text = ""
+    step = 0
+    try:
+        async with websockets.connect(url, max_size=None, open_timeout=20) as ws:
+            first = json.loads(await asyncio.wait_for(ws.recv(), timeout=20))
+            if first.get("type") == "error":
+                yield _sse("error", {"message": first.get("message", "세션 재개에 실패했습니다.")})
+                yield _sse("done", {"sources": [], "session_id": sid})
+                return
+
+            await ws.send(json.dumps({"type": "prompt", "text": message}, ensure_ascii=False))
+
+            # 3) claude stream-json 이벤트 중계
+            while True:
+                raw = await asyncio.wait_for(ws.recv(), timeout=300)
+                try:
+                    ev = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    # claude 가 stdout 에 섞어 보낸 비-JSON 라인(경고/로그 등) 무시
+                    continue
+                t = ev.get("type")
+                if t == "assistant":
+                    for b in ev.get("message", {}).get("content", []):
+                        bt = b.get("type")
+                        if bt == "text":
+                            txt = b.get("text", "") or ""
+                            if txt:
+                                full_text += txt
+                                yield _sse("token", {"text": txt})
+                        elif bt == "tool_use":
+                            step += 1
+                            yield _sse("tool_call", {"name": b.get("name", "tool"), "step": step})
+                elif t == "result":
+                    if not full_text.strip():
+                        rt = ev.get("result") or ""
+                        if rt:
+                            full_text = rt
+                            yield _sse("token", {"text": rt})
+                    break
+                elif t in ("error", "closed"):
+                    if not full_text.strip():
+                        yield _sse("error", {"message": ev.get("message") or "에이전트 연결이 종료되었습니다."})
+                    break
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Self-agent bridge error")
+        if not full_text.strip():
+            yield _sse("error", {"message": f"자체 에이전트 오류: {str(e)[:180]}"})
+        yield _sse("done", {"sources": [], "session_id": sid})
+        return
+
+    yield _sse("done", {"sources": _extract_sources_simple(full_text), "session_id": sid})
 
 
 import os as _os
@@ -89,8 +240,15 @@ async def chat_endpoint(request: Request):
     body = await request.json()
     message = body.get("message", "")
     session_id = body.get("session_id")
+    llm = body.get("llm", "gemini")
 
     async def event_stream():
+        # 자체 에이전트 경로 — Gemini/ADK 대신 Session Manager 세션으로 중계
+        if llm == "self":
+            async for chunk in _stream_self_agent(message, session_id):
+                yield chunk
+            return
+
         sid = session_id or ""
         try:
             # 세션 가져오기 또는 생성
