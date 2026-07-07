@@ -106,6 +106,41 @@ def _extract_sources_simple(text: str) -> list[dict]:
     return out
 
 
+def _extract_sources_self(text: str, queried_laws: list[str]) -> list[dict]:
+    """자체 에이전트 답변의 참고 조문 추출.
+
+    자체 에이전트는 '헌법 ... 제62조' 처럼 법령명과 조번호를 떨어뜨려 쓰므로
+    인접 패턴만으로는 못 잡는다. 대신 MCP 로 조회한 실제 DB 법령명(queried_laws)을
+    기준으로, 본문의 '제N조'를 가장 가까운(직전) 법령 문맥에 연결한다.
+    단일 법령만 조회했으면 전부 그 법령에 귀속. 조회 법령이 없으면 인접 패턴 폴백.
+    """
+    if not queried_laws:
+        return _extract_sources_simple(text)
+
+    # 실제 DB명 + 짧은형(마지막 어절, 예: "조선…민주주의…헌법"→"헌법") 매핑
+    smap: dict = {}
+    for db in queried_laws:
+        for form in {db, db.split()[-1]}:
+            if form:
+                smap[form] = db
+    forms = sorted(smap.keys(), key=len, reverse=True)
+    name_alt = "|".join(re.escape(f) for f in forms)
+    tok = re.compile(rf"({name_alt})|제\s*(\d+)\s*조")
+
+    seen: set = set()
+    out: list[dict] = []
+    current = queried_laws[0] if len(queried_laws) == 1 else None
+    for m in tok.finditer(text):
+        if m.group(1):
+            current = smap.get(m.group(1), current)
+        elif m.group(2) and current:
+            key = (current, m.group(2))
+            if key not in seen:
+                seen.add(key)
+                out.append({"law_name": current, "article": m.group(2)})
+    return out
+
+
 async def _stream_self_agent(message: str, prev_session_id: str | None):
     """자체 에이전트(SM 세션) 경로 — SSE 문자열을 순차 yield 한다."""
     # 1) 대상 세션 해석
@@ -130,6 +165,7 @@ async def _stream_self_agent(message: str, prev_session_id: str | None):
     url = f"{_sm_ws_base()}/api/v1/resume/{sid}?skip=1{tok}"
     full_text = ""
     step = 0
+    queried_laws: list[str] = []  # MCP로 조회한 실제 DB 법령명(참고링크 근거)
     try:
         async with websockets.connect(url, max_size=None, open_timeout=20) as ws:
             first = json.loads(await asyncio.wait_for(ws.recv(), timeout=20))
@@ -159,7 +195,15 @@ async def _stream_self_agent(message: str, prev_session_id: str | None):
                                 yield _sse("token", {"text": txt})
                         elif bt == "tool_use":
                             step += 1
-                            yield _sse("tool_call", {"name": b.get("name", "tool"), "step": step})
+                            nm = b.get("name", "tool")
+                            _inp = b.get("input") or {}
+                            _lname = _inp.get("name")
+                            if _lname and nm in (
+                                "mcp__nklaw__law_get", "mcp__nklaw__law_history",
+                                "mcp__nklaw__law_diff", "mcp__nklaw__tools_verify",
+                            ):
+                                queried_laws.append(str(_lname))
+                            yield _sse("tool_call", {"name": nm, "step": step})
                 elif t == "result":
                     if not full_text.strip():
                         rt = ev.get("result") or ""
@@ -178,7 +222,8 @@ async def _stream_self_agent(message: str, prev_session_id: str | None):
         yield _sse("done", {"sources": [], "session_id": sid})
         return
 
-    yield _sse("done", {"sources": _extract_sources_simple(full_text), "session_id": sid})
+    _uniq_laws = list(dict.fromkeys(queried_laws))
+    yield _sse("done", {"sources": _extract_sources_self(full_text, _uniq_laws), "session_id": sid})
 
 
 import os as _os

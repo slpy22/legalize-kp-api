@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
@@ -14,7 +15,18 @@ from app.chat.router import router as chat_router
 
 def create_app():
     load_config("config.yaml")
-    app = FastAPI(title="legalize-kp API", version="1.0.0")
+
+    # streamable-http MCP 앱 생성 + 세션매니저 lifespan 배선.
+    # mount 만 하면 session_manager task group 이 시작되지 않아
+    # "Task group is not initialized" 500 이 난다 → lifespan 으로 run() 실행.
+    mcp_app = mcp.streamable_http_app()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with mcp.session_manager.run():
+            yield
+
+    app = FastAPI(title="legalize-kp API", version="1.0.0", lifespan=lifespan)
 
     # CORS 허용 (웹 프론트엔드에서 API 호출)
     app.add_middleware(
@@ -28,7 +40,7 @@ def create_app():
     app.include_router(router)
     app.include_router(compare_router)
     app.include_router(chat_router)
-    app.mount("/mcp", mcp.streamable_http_app())
+    app.mount("/mcp", mcp_app)
     return app
 
 

@@ -1,9 +1,74 @@
 from __future__ import annotations
 
+import logging
+import os
 import re
+
+import httpx
 
 from app.repositories.law_repo import LawRepository
 from app.services.search_engine import SearchEngine
+
+logger = logging.getLogger("law_service")
+
+# ---------------------------------------------------------------------------
+# 자체 에이전트(Session Manager) — 개정 diff 분석 리포트를 구독 기반 Claude 로 생성.
+# Gemini 종량 호출을 대체(비용절감). 챗봇 세션(b8748f86)은 프롬프트 8000자 제한이 있어
+# 재사용 불가 → diff 근거(수만 자)를 담을 수 있는 전용 '생성기' 세션을 별도로 둔다.
+#   1) GET  {BASE}/api/v1/sessions?label=<라벨> → session_id 해석
+#   2) POST {BASE}/api/v1/sessions/{id}/ask     → 원샷 fork 질의(원본 불변, fork 자동삭제)
+# 실패(SM 다운·세션 없음·오류) 시 호출측이 Gemini 로 폴백한다.
+# ---------------------------------------------------------------------------
+_SM_BASE = os.environ.get("SM_RESUME_BASE", "http://host.docker.internal:5100").rstrip("/")
+_SM_TOKEN = os.environ.get("SM_API_TOKEN", "")
+_SM_GEN_LABEL = os.environ.get("SM_GEN_LABEL", "북한법 생성기")
+
+
+async def _sm_find_gen_session() -> str | None:
+    """_SM_GEN_LABEL 을 라벨(tags) 또는 표시이름(name)으로 갖는 세션 id 반환."""
+    headers = {"Authorization": f"Bearer {_SM_TOKEN}"} if _SM_TOKEN else {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            f"{_SM_BASE}/api/v1/sessions",
+            params={"label": _SM_GEN_LABEL, "limit": 1}, headers=headers,
+        )
+        r.raise_for_status()
+        ss = r.json().get("sessions", [])
+        if ss:
+            return ss[0]["session_id"]
+        r = await client.get(
+            f"{_SM_BASE}/api/v1/sessions", params={"limit": 0}, headers=headers,
+        )
+        r.raise_for_status()
+        for s in r.json().get("sessions", []):
+            if s.get("label_name") == _SM_GEN_LABEL or _SM_GEN_LABEL in (s.get("labels") or []):
+                return s["session_id"]
+    return None
+
+
+async def _generate_report_via_self(prompt: str) -> str:
+    """전용 생성기 세션(구독 Claude)에 원샷 요청해 리포트 마크다운을 반환.
+
+    프로필(SM측)에 분석가 시스템프롬프트·프롬프트 80000자 허용·모든 도구 차단이 설정돼 있다.
+    실패하면 예외를 던져 호출측이 Gemini 로 폴백하게 한다.
+    """
+    sid = await _sm_find_gen_session()
+    if not sid:
+        raise RuntimeError(f"생성기 세션('{_SM_GEN_LABEL}')을 찾을 수 없습니다.")
+    headers = {"Authorization": f"Bearer {_SM_TOKEN}"} if _SM_TOKEN else {}
+    async with httpx.AsyncClient(timeout=240) as client:
+        r = await client.post(
+            f"{_SM_BASE}/api/v1/sessions/{sid}/ask",
+            json={"prompt": prompt, "timeout": 200}, headers=headers,
+        )
+        r.raise_for_status()
+        data = r.json()
+    if data.get("is_error"):
+        raise RuntimeError(f"생성기 오류: {str(data.get('answer') or data.get('result'))[:120]}")
+    ans = (data.get("answer") or "").strip()
+    if not ans:
+        raise RuntimeError("생성기 빈 응답")
+    return ans
 
 
 def _norm_ws(s: str | None) -> str:
@@ -371,25 +436,34 @@ class LawService:
 - 이번 개정이 드러내는 방향성·특징을 통찰력 있게 정리.
 """
 
+        # 1차: 자체 에이전트(구독 Claude, 전용 생성기 세션) — 비용절감 목적.
+        report_md = ""
         try:
-            from google import genai
-            from google.genai import types as gtypes
+            report_md = await _generate_report_via_self(prompt)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("자체 에이전트 리포트 실패 → Gemini 폴백: %s", e)
 
-            client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
-            resp = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    system_instruction=(
-                        "당신은 북한법·비교법 전문 분석가입니다. 제공된 변화 데이터에만 근거하여 "
-                        "의미 중심의 체계적 리포트를 작성합니다. 추측하지 말고 데이터에 충실하되, "
-                        "법적·제도적 함의를 통찰력 있게 해석하세요."
+        # 2차(폴백): 자체 에이전트 불가(SM 다운·세션 없음·오류) 시에만 Gemini.
+        if not report_md.strip():
+            try:
+                from google import genai
+                from google.genai import types as gtypes
+
+                client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+                resp = client.models.generate_content(
+                    model="gemini-2.5-flash-lite",
+                    contents=prompt,
+                    config=gtypes.GenerateContentConfig(
+                        system_instruction=(
+                            "당신은 북한법·비교법 전문 분석가입니다. 제공된 변화 데이터에만 근거하여 "
+                            "의미 중심의 체계적 리포트를 작성합니다. 추측하지 말고 데이터에 충실하되, "
+                            "법적·제도적 함의를 통찰력 있게 해석하세요."
+                        ),
                     ),
-                ),
-            )
-            report_md = resp.text or ""
-        except Exception as e:
-            report_md = f"리포트 생성에 실패했습니다: {str(e)[:150]}"
+                )
+                report_md = resp.text or ""
+            except Exception as e:  # noqa: BLE001
+                report_md = f"리포트 생성에 실패했습니다: {str(e)[:150]}"
 
         return {
             "law_name": diff["law_name"],
