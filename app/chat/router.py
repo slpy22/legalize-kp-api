@@ -50,6 +50,9 @@ USER_ID = "web_user"
 SM_BASE = os.environ.get("SM_RESUME_BASE", "http://host.docker.internal:5100").rstrip("/")
 SM_TOKEN = os.environ.get("SM_API_TOKEN", "")
 SM_LABEL = os.environ.get("SM_AGENT_LABEL", "북한법전문가")
+# 세션 ID 직접 지정(권장): 설정 시 라벨 조회를 건너뛰고 이 세션을 바로 쓴다.
+# SM 라벨은 외부 요인으로 초기화될 수 있어(우리 소관 아님), ID 고정이 더 견고하다.
+SM_AGENT_SESSION = os.environ.get("SM_AGENT_SESSION", "").strip()
 
 
 def _sm_ws_base() -> str:
@@ -66,7 +69,12 @@ async def _sm_find_session_id() -> str | None:
     SM 은 라벨(tags 배열)과 표시이름(name)이 별개다. 먼저 라벨 필터로 조회하고,
     없으면 전체 목록에서 표시이름이 일치하는 가장 최근 세션을 찾는다.
     (사용자는 둘 중 무엇으로 지정했든 'SM_AGENT_LABEL' 값으로 인식한다.)
+
+    단, SM_AGENT_SESSION 이 설정돼 있으면 라벨 조회 없이 그 세션 ID 를 바로 반환한다.
     """
+    if SM_AGENT_SESSION:
+        logger.info("자체 에이전트 세션 ID 고정 사용: %s", SM_AGENT_SESSION)
+        return SM_AGENT_SESSION
     headers = {"Authorization": f"Bearer {SM_TOKEN}"} if SM_TOKEN else {}
     async with httpx.AsyncClient(timeout=15) as client:
         # 1) 라벨(tags) 매칭

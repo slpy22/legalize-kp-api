@@ -22,10 +22,17 @@ logger = logging.getLogger("law_service")
 _SM_BASE = os.environ.get("SM_RESUME_BASE", "http://host.docker.internal:5100").rstrip("/")
 _SM_TOKEN = os.environ.get("SM_API_TOKEN", "")
 _SM_GEN_LABEL = os.environ.get("SM_GEN_LABEL", "북한법 생성기")
+# 세션 ID 직접 지정(권장): 설정 시 라벨 조회를 건너뛴다. 라벨은 외부 요인으로
+# 초기화될 수 있어(SM 은 우리 소관 아님) ID 고정이 더 견고하다.
+_SM_GEN_SESSION = os.environ.get("SM_GEN_SESSION", "").strip()
 
 
 async def _sm_find_gen_session() -> str | None:
-    """_SM_GEN_LABEL 을 라벨(tags) 또는 표시이름(name)으로 갖는 세션 id 반환."""
+    """생성기 세션 id 반환. _SM_GEN_SESSION 이 설정되면 그 ID 를 바로 쓰고,
+    아니면 _SM_GEN_LABEL 을 라벨(tags)/표시이름(name)으로 갖는 세션을 조회한다."""
+    if _SM_GEN_SESSION:
+        logger.info("diff 생성기 세션 ID 고정 사용: %s", _SM_GEN_SESSION)
+        return _SM_GEN_SESSION
     headers = {"Authorization": f"Bearer {_SM_TOKEN}"} if _SM_TOKEN else {}
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.get(
@@ -63,11 +70,14 @@ async def _generate_report_via_self(prompt: str) -> str:
         )
         r.raise_for_status()
         data = r.json()
-    if data.get("is_error"):
-        raise RuntimeError(f"생성기 오류: {str(data.get('answer') or data.get('result'))[:120]}")
     ans = (data.get("answer") or "").strip()
-    if not ans:
-        raise RuntimeError("생성기 빈 응답")
+    # claude 가 is_error 플래그를 세워도(도구 거부·소프트 제한 등) 리포트 본문은 정상인
+    # 경우가 있다. 유효한 마크다운 리포트가 있으면 그대로 사용하고, 본문이 없거나 리포트
+    # 형태가 아닐 때만 실패로 간주해 호출측이 Gemini 로 폴백하게 한다.
+    if len(ans) < 300 or "#" not in ans:
+        raise RuntimeError(
+            f"생성기 유효응답 없음 (is_error={data.get('is_error')}, len={len(ans)})"
+        )
     return ans
 
 
