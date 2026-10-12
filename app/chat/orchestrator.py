@@ -661,7 +661,10 @@ async def _strategy_comparison(cq, repo, pg, session, bundle, progress):
 
     lines = [f"## {law_name} 남북법 비교"]
     kr_names: list[str] = []
-    if "error" not in mapping:
+    if mapping.get("mapped") is False:
+        # 미매핑은 오류가 아닌 정상 상태(비교 매핑 미작성)
+        lines.append(f"- {mapping.get('message') or '남북 비교 매핑이 아직 없습니다.'}")
+    elif "error" not in mapping:
         kr_names = mapping.get("kr_names", [])
         lines.append(f"- 대응 남한법: {', '.join(kr_names)}")
         lines.append(f"- 관계: {mapping.get('relationship', '')}")

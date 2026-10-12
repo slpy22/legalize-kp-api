@@ -310,8 +310,9 @@ async def compare_laws(kp_name: str) -> str:
     session = await _get_session()
     try:
         mapping = await get_mapping(session, kp_name)
-        if "error" in mapping:
-            return mapping["error"]
+        # 미매핑(mapped=False)은 오류가 아닌 정상 상태 — 안내문을 그대로 돌려준다
+        if mapping.get("mapped") is False or "error" in mapping:
+            return mapping.get("message") or mapping.get("error") or f"{kp_name}: 남북 비교 매핑 없음"
 
         kr_names = mapping.get("kr_names", [])
         lines = [

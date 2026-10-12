@@ -25,8 +25,11 @@ class SearchEngine:
         limit: int = 20,
         page: int = 1,
         per_page: int = 10,
+        articles_per_law: int = 5,
     ) -> dict:
         """Search and return paginated results with total count.
+
+        articles_per_law: 법령별로 함께 돌려주는 matching_articles 상한(기본 5, T4 (b)).
 
         When page/per_page are used, limit is ignored in favour of per_page.
         Returns {"results": [...], "total": int}.
@@ -34,11 +37,15 @@ class SearchEngine:
         # Fetch a generous window so we can count total matches
         fetch_limit = max(limit, 200)
         if mode == "keyword":
-            all_results = await self._keyword_search(query, category, fetch_limit)
+            all_results = await self._keyword_search(
+                query, category, fetch_limit, articles_per_law=articles_per_law
+            )
         elif mode == "semantic":
             all_results = await self._semantic_search(query, category, fetch_limit)
         else:
-            all_results = await self._hybrid_search(query, category, fetch_limit)
+            all_results = await self._hybrid_search(
+                query, category, fetch_limit, articles_per_law=articles_per_law
+            )
 
         total = len(all_results)
         offset = (page - 1) * per_page
@@ -46,7 +53,7 @@ class SearchEngine:
         return {"results": page_results, "total": total}
 
     async def _keyword_search(
-        self, query: str, category: str | None, limit: int
+        self, query: str, category: str | None, limit: int, articles_per_law: int = 5
     ) -> list[dict]:
         articles, _ = await self.pg_search.search_articles(query, limit=limit * 2)
         laws, _ = await self.pg_search.search_laws(query, category=category, limit=limit)
@@ -70,7 +77,7 @@ class SearchEngine:
                     "category": law.get("category", ""),
                     "score": law.get("rank", 0),
                     "source": "keyword",
-                    "matching_articles": grouped.get(name, [])[:5],
+                    "matching_articles": grouped.get(name, [])[:articles_per_law],
                 }
             )
 
@@ -83,7 +90,7 @@ class SearchEngine:
                         "category": arts[0].get("category", ""),
                         "score": max(a.get("rank", 0) for a in arts),
                         "source": "keyword",
-                        "matching_articles": arts[:5],
+                        "matching_articles": arts[:articles_per_law],
                     }
                 )
 
@@ -129,9 +136,11 @@ class SearchEngine:
         return results[:limit]
 
     async def _hybrid_search(
-        self, query: str, category: str | None, limit: int
+        self, query: str, category: str | None, limit: int, articles_per_law: int = 5
     ) -> list[dict]:
-        keyword_results = await self._keyword_search(query, category, limit)
+        keyword_results = await self._keyword_search(
+            query, category, limit, articles_per_law=articles_per_law
+        )
         semantic_results = await self._semantic_search(query, category, limit)
 
         return self._rrf_merge(keyword_results, semantic_results, k=60, limit=limit)

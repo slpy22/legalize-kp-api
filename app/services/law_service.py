@@ -6,10 +6,139 @@ import re
 
 import httpx
 
+from app.core.config import get_config
 from app.repositories.law_repo import LawRepository
 from app.services.search_engine import SearchEngine
 
 logger = logging.getLogger("law_service")
+
+
+# ---------------------------------------------------------------------------
+# T4: 출처 설명 / frontmatter 메타 헬퍼
+# ---------------------------------------------------------------------------
+def _sources_cfg() -> dict:
+    try:
+        return dict((get_config() or {}).get("sources") or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def source_desc(code: str | None) -> dict:
+    """출처 코드(mobu/nis/unification)를 설명 객체로. 모르는 코드는 code 만 돌려준다."""
+    d = _sources_cfg().get(code or "")
+    if isinstance(d, dict):
+        return {"code": code, **d}
+    return {"code": code, "name": None, "desc": None}
+
+
+def _fm(obj: dict | None) -> dict:
+    """laws/law_versions 의 frontmatter(jsonb) 를 dict 로. 문자열이면 json 파싱."""
+    import json as _json
+    fm = (obj or {}).get("frontmatter")
+    if isinstance(fm, str):
+        try:
+            fm = _json.loads(fm)
+        except Exception:  # noqa: BLE001
+            fm = {}
+    return fm if isinstance(fm, dict) else {}
+
+
+def _flag(v) -> bool | None:
+    """frontmatter 의 true/false(불린 또는 'true'/'false' 문자열) → bool. 없으면 None."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("true", "1", "yes", "y")
+
+
+def provenance(
+    source: str | None,
+    fm: dict | None = None,
+    is_ocr: bool | None = None,
+    nis_edition: bool | None = None,
+    excerpt: bool | None = None,
+) -> dict:
+    """출처 표시 객체 (T7). 웹은 labels 를 배지로 그린다.
+
+    - label / labels: 출처 짧은 이름(config sources.*.label) + '발췌본'(frontmatter 발췌본 true)
+      + '미검증 OCR'(OCR여부 true).
+    - is_ocr: laws.is_ocr 또는 frontmatter 'OCR여부'.
+    - nis_edition: frontmatter '정본여부'. 수집 측 생성 규칙이 '판본 출처 == nis'(국정원 법령집
+      수록본 여부)라 신뢰도가 아니다 → '비정본' 라벨은 쓰지 않는다(법무부본 오해 방지).
+      값이 없으면 None('해당 없음').
+    - excerpt: frontmatter '발췌본'(수집 T6) — 전문이 아닌 발췌 판본 표시.
+      excerpt_articles: frontmatter '발췌조문'(['제82조', …]) 그대로 + 숫자만 뽑은 article_numbers.
+    """
+    fm = fm or {}
+    if is_ocr is None:
+        is_ocr = _flag(fm.get("OCR여부"))
+    if nis_edition is None:
+        nis_edition = _flag(fm.get("정본여부"))
+    if excerpt is None:
+        excerpt = _flag(fm.get("발췌본"))
+    is_ocr, excerpt = bool(is_ocr), bool(excerpt)
+    raw_ex = fm.get("발췌조문") if excerpt else None
+    excerpt_articles = [str(x).strip() for x in raw_ex] if isinstance(raw_ex, list) else []
+    sd = source_desc(source)
+    label = sd.get("label") or sd.get("name") or source
+    labels: list[str] = [label] if label else []
+    if excerpt:
+        labels.append("발췌본")
+    if is_ocr:
+        labels.append("미검증 OCR")
+    out = {
+        "source": source,
+        "source_desc": sd,
+        "label": label,
+        "is_ocr": is_ocr,
+        "nis_edition": nis_edition,
+        "excerpt": excerpt,
+        "labels": labels,
+    }
+    if excerpt:
+        import re as _re
+        out["excerpt_articles"] = excerpt_articles
+        out["excerpt_article_numbers"] = [
+            m.group(1) for s in excerpt_articles for m in [_re.search(r"(\d+)", s)] if m
+        ]
+    return out
+
+
+def excerpt_warning(*versions: dict | None) -> str | None:
+    """판본 비교(diff_text/diff_semantic)에 발췌본이 끼면 경고 문구. 아니면 None.
+
+    발췌본은 일부 조문만 있어 전문처럼 비교하면 '삭제/신설'이 실제 개정과 다르게 나온다(수집 지적).
+    """
+    sides = []
+    for v in versions:
+        if v and provenance(v.get("source"), _fm(v))["excerpt"]:
+            sides.append(str(v.get("version_date")))
+    if not sides:
+        return None
+    return (
+        f"발췌본 판본({', '.join(sides)})이 비교에 포함되어 있습니다. 발췌본은 일부 조문만 담고 있어 "
+        "'삭제/신설'로 분류된 조문이 실제 개정이 아닐 수 있습니다. 발췌조문(excerpt_articles) 범위 안에서만 해석하세요."
+    )
+
+
+def law_meta(law: dict) -> dict:
+    """법령 공통 메타 — 출처 설명·별칭·날짜이견(frontmatter '날짜이견' 그대로)·출처표시(provenance)."""
+    fm = _fm(law)
+    aliases: list[str] = []
+    for key in ("name_alias", "옛이름", "former_names"):
+        v = fm.get(key)
+        if isinstance(v, str):
+            v = [v]
+        if isinstance(v, list):
+            aliases.extend(str(x) for x in v if str(x).strip())
+    return {
+        "source_desc": source_desc(law.get("source")),
+        "provenance": provenance(law.get("source"), fm, is_ocr=law.get("is_ocr")),
+        "aliases": list(dict.fromkeys(aliases)),
+        # 수집 측 계약: [{항목, 원문값, 이견값, 출처, 비고?}] (문자열, 날짜는 ISO)
+        "date_disputes": fm.get("날짜이견") or [],
+    }
 
 # ---------------------------------------------------------------------------
 # 자체 에이전트(Session Manager) — 개정 diff 분석 리포트를 구독 기반 Claude 로 생성.
@@ -102,14 +231,32 @@ class LawService:
         limit: int = 20,
         page: int = 1,
         per_page: int = 10,
+        articles_per_law: int = 5,
     ) -> dict:
         data = await self.search_engine.search(
             query, mode=mode, category=category, limit=limit,
-            page=page, per_page=per_page,
+            page=page, per_page=per_page, articles_per_law=articles_per_law,
         )
+        # T7 (b): 결과 법령별 출처·OCR·정본 표시. (결과의 'source' 키는 검색 경로(keyword/semantic)라
+        # 데이터 출처와 이름이 겹치므로 별도 provenance 객체로 넣는다.)
+        results = data["results"]
+        try:
+            flags = await self.law_repo.provenance_for_names(
+                [r.get("law_name") for r in results if r.get("law_name")]
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("search provenance lookup skipped: %s", e)
+            flags = {}
+        for r in results:
+            f = flags.get(r.get("law_name"))
+            if f:
+                r["provenance"] = provenance(
+                    f.get("source"), None, is_ocr=bool(f.get("is_ocr")),
+                    nis_edition=_flag(f.get("auth_flag")), excerpt=_flag(f.get("excerpt_flag")),
+                )
         return {
             "total": data["total"],
-            "results": data["results"],
+            "results": results,
             "mode": mode,
         }
 
@@ -140,11 +287,16 @@ class LawService:
                 articles_list = [a for a in articles_list if grep in (a.get("content") or "")]
             return {
                 "law": law,
+                "meta": law_meta(law),
                 "version": {
                     "version_date": v["version_date"],
                     "action": v["action"],
                     "source": v["source"],
+                    "source_desc": source_desc(v.get("source")),
+                    "provenance": provenance(v.get("source"), _fm(v)),
                     "frontmatter": v.get("frontmatter") or {},
+                    # 판본 frontmatter 에 날짜이견이 있으면 그 판본 기준으로도 노출
+                    "date_disputes": _fm(v).get("날짜이견") or [],
                     "full_text": v.get("full_text") or "",
                 },
                 "articles": articles_list,
@@ -156,9 +308,30 @@ class LawService:
         )
         return {
             "law": law,
+            "meta": law_meta(law),
             "articles": articles,
             "total_articles": len(articles),
         }
+
+    async def list_laws(
+        self, category: str | None = None, offset: int = 0, limit: int = 100
+    ) -> dict:
+        """전체 법령 목록(페이지네이션) — 논문 팀 R4."""
+        rows, total = await self.law_repo.list_laws(
+            category=category, offset=offset, limit=limit
+        )
+        for r in rows:
+            r["source_desc"] = source_desc(r.get("source"))
+        return {"total": total, "offset": offset, "limit": limit, "laws": rows}
+
+    async def resolve_name(self, name: str) -> dict:
+        """이름/별칭/약칭 → 정식 법령명 해석(모호하면 후보 목록)."""
+        return await self.law_repo.resolve_name(name)
+
+    def list_sources(self) -> dict:
+        """출처 코드 설명 목록(mobu/nis/unification)."""
+        srcs = _sources_cfg()
+        return {"sources": [{"code": k, **(v if isinstance(v, dict) else {})} for k, v in srcs.items()]}
 
     async def list_versions(self, name: str) -> dict:
         """적재된 버전 메타 목록(일자/action/source)."""
@@ -166,6 +339,13 @@ class LawService:
         if law is None:
             return {"error": f"법률을 찾을 수 없습니다: {name}"}
         versions = await self.law_repo.list_versions(law["id"])
+        for v in versions:
+            v["source_desc"] = source_desc(v.get("source"))
+            ocr, nis = _flag(v.pop("ocr_flag", None)), _flag(v.pop("auth_flag", None))
+            exc = _flag(v.pop("excerpt_flag", None))
+            v["provenance"] = provenance(
+                v.get("source"), None, is_ocr=ocr, nis_edition=nis, excerpt=exc
+            )
         return {
             "law_name": law["name"],
             "versions": versions,
@@ -198,6 +378,7 @@ class LawService:
                 "version_date": v_from["version_date"],
                 "action": v_from.get("action"),
                 "source": v_from.get("source"),
+                "provenance": provenance(v_from.get("source"), _fm(v_from)),
                 "articles": v_from.get("articles") or [],
                 "full_text": v_from.get("full_text") or "",
             },
@@ -205,9 +386,12 @@ class LawService:
                 "version_date": v_to["version_date"],
                 "action": v_to.get("action"),
                 "source": v_to.get("source"),
+                "provenance": provenance(v_to.get("source"), _fm(v_to)),
                 "articles": v_to.get("articles") or [],
                 "full_text": v_to.get("full_text") or "",
             },
+            # T7: 발췌본이 끼면 비교 해석 주의 (없으면 None)
+            "warning": excerpt_warning(v_from, v_to),
         }
 
     async def diff_semantic(
@@ -362,6 +546,10 @@ class LawService:
             },
             "summary": summary,
             "pairs": pairs,
+            # T7: 발췌본이 끼면 removed/added 가 실제 개정과 다를 수 있다 — 경고와 양쪽 출처표시
+            "warning": excerpt_warning(v_from, v_to),
+            "from_provenance": provenance(v_from.get("source"), _fm(v_from)),
+            "to_provenance": provenance(v_to.get("source"), _fm(v_to)),
         }
 
     async def diff_report(
@@ -499,20 +687,25 @@ class LawService:
         by_date: dict[str, dict] = {}
         for a in amendments:
             d = str(a.get("date"))
+            eff = a.get("effective_date")
             by_date[d] = {
                 "id": a.get("id"),
                 "law_id": law["id"],
                 "date": d,
                 "action": a.get("action") or "수정보충",
                 "basis": a.get("basis"),
+                # T4 (d): 개정이력 '시행일' → effective_date (데이터에 없으면 None)
+                "effective_date": str(eff) if eff else None,
                 "has_text": False,
                 "source": None,
+                "source_desc": None,
             }
         for v in versions:
             d = str(v.get("version_date"))
             if d in by_date:
                 by_date[d]["has_text"] = True
                 by_date[d]["source"] = v.get("source")
+                by_date[d]["source_desc"] = source_desc(v.get("source"))
             else:
                 by_date[d] = {
                     "id": f"v{v.get('id')}",
@@ -520,14 +713,61 @@ class LawService:
                     "date": d,
                     "action": v.get("action") or "수정보충",
                     "basis": None,
+                    "effective_date": None,
                     "has_text": True,
                     "source": v.get("source"),
+                    "source_desc": source_desc(v.get("source")),
                 }
 
+        # T7 (c): frontmatter 개정이력 주석('이력추가' — 원문 미확보 개정; 수집 T6 계약:
+        # 일자(ISO 'YYYY-MM-DD' 또는 월만 아는 'YYYY-MM')·내용·원문미확보 true·외부근거·비고?) 를 겹친다.
+        #  - 같은 일자가 amendments 에 있으면 unverified/external_basis/note 만 덧붙인다.
+        #  - 'YYYY-MM' 처럼 DATE 로 적재되지 못해 amendments 에 없는 항목은 여기서 행을 추가한다.
+        #  - 자리표 판본은 만들지 않기로 했으므로(관리 결정) unverified 는 항상 has_text false.
+        # 판본별 출처표시(provenance)도 함께 붙인다.
+        fm_hist = [
+            e for e in (_fm(law).get("개정이력") or [])
+            if isinstance(e, dict) and e.get("일자")
+        ]
+        version_by_date = {str(v.get("version_date")): v for v in versions}
+        for i, e in enumerate(fm_hist):
+            d = str(e.get("일자")).strip()
+            unverified = bool(_flag(e.get("원문미확보")))
+            row = by_date.get(d)
+            if row is None:
+                row = {
+                    "id": f"a{i}", "law_id": law["id"], "date": d,
+                    "action": str(e.get("내용") or "수정보충"), "basis": None,
+                    "effective_date": None, "has_text": False, "source": None, "source_desc": None,
+                }
+                by_date[d] = row
+            row["unverified"] = unverified
+            row["external_basis"] = (e.get("외부근거") or e.get("근거")) if unverified else None
+            row["note"] = e.get("비고") if unverified else None
+            if unverified:
+                row["has_text"] = False
+        for d, row in by_date.items():
+            row.setdefault("unverified", False)
+            row.setdefault("external_basis", None)
+            row.setdefault("note", None)
+            v = version_by_date.get(d)
+            row["provenance"] = (
+                provenance(v.get("source"), None,
+                           is_ocr=_flag(v.get("ocr_flag")), nis_edition=_flag(v.get("auth_flag")),
+                           excerpt=_flag(v.get("excerpt_flag")))
+                if v else None
+            )
+
         merged = sorted(by_date.values(), key=lambda x: x["date"])
+        meta = law_meta(law)
         return {
-            "law_name": name,
+            "law_name": law["name"],
             "amendments": merged,
+            "provenance": meta["provenance"],
+            # T4 (f): frontmatter '날짜이견' — 수집 측 계약 그대로 노출
+            "date_disputes": meta["date_disputes"],
+            "aliases": meta["aliases"],
+            "source_desc": meta["source_desc"],
         }
 
     async def diff(

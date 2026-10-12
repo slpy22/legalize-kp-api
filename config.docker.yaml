@@ -18,6 +18,9 @@ embedding:
 data:
   repo_path: "/data/legalize-kp"
   kp_dir: "/data/legalize-kp/kp"
+  # import 는 호스트에서 실행되어 호스트 config.yaml 의 경로를 쓴다. 컨테이너 안에서 import 를
+  # 돌릴 때만 의미 있음(마운트돼 있지 않으면 name_alias 주입을 건너뛴다).
+  master_list: "/data/북한법령_마스터목록.json"
   # compare 데이터는 api 이미지에 포함됨(Dockerfile COPY . . → /app/data/compare)
   compare_path: "/app/data/compare"
 external:
@@ -26,3 +29,27 @@ external:
   lawgo_oc: "slpy22"
 mcp:
   server_name: "legalize-kp"
+# 출처 코드 설명 — 런타임 API(law_get/law_versions/law_history/law_sources)가 읽는다.
+# config.yaml 과 같은 내용을 유지한다(컨테이너는 이 파일로 config.yaml 을 덮어쓴다).
+sources:
+  mobu:
+    name: "법무부"
+    label: "법무부 통일법제DB"
+    desc: "법무부 통일법제 데이터베이스(unilaw.go.kr) 북한법령 원문(HWP·PDF). 한국 정부가 입력한 원문."
+  nis:
+    name: "국가정보원"
+    label: "국정원 법령집"
+    desc: "국가정보원 「2024 북한법령집」 상·하권. 권/쪽은 국정원권·국정원페이지 메타."
+  unification:
+    name: "통일부"
+    label: "통일부 발표"
+    desc: "통일부 발표 자료(개별법령 _meta.json source_label)."
+  nktechlab:
+    name: "NK TechLab"
+    label: "NK TechLab"
+    desc: "NK TechLab 북한법령 DB(2025-07 공개) — 2024년 판매 북한 스마트폰 앱 「조선민주주의인민공화국 법전」(2024년 중반 현행) 화면 OCR, 미검증 텍스트(띄어쓰기 잡음)."
+    unverified: true
+# 옛 표기 → 정식명 (config.yaml 과 동일하게 유지)
+legacy_names:
+  반동문화사상문화배격법: 반동사상문화배격법
+  사회주의농총발전법: 사회주의농촌발전법

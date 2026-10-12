@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS articles (
     article_title  TEXT,
     content        TEXT,
     chapter        TEXT,
+    part           TEXT,
+    section        TEXT,
     position       INT,
     UNIQUE(law_id, article_number)
 );
@@ -62,9 +64,18 @@ CREATE TABLE IF NOT EXISTS amendments (
     date    DATE NOT NULL,
     action  TEXT NOT NULL,
     basis   TEXT,
+    effective_date DATE,
     UNIQUE(law_id, date)
 );
 """
+
+# 기존 DB 에 새 컬럼을 더하는 멱등 마이그레이션(T4: 편·절·시행일).
+# CREATE TABLE IF NOT EXISTS 는 이미 있는 표를 바꾸지 않으므로 별도로 실행한다.
+MIGRATIONS = [
+    "ALTER TABLE articles   ADD COLUMN IF NOT EXISTS part           TEXT;",
+    "ALTER TABLE articles   ADD COLUMN IF NOT EXISTS section        TEXT;",
+    "ALTER TABLE amendments ADD COLUMN IF NOT EXISTS effective_date DATE;",
+]
 
 CREATE_LAW_VERSIONS = """
 CREATE TABLE IF NOT EXISTS law_versions (
@@ -142,6 +153,10 @@ async def create_schema(cfg: dict) -> None:
             ]:
                 await conn.execute(ddl)
                 print(f"[ok]   Table '{label}' ready.")
+            # 기존 표에 새 컬럼 추가(멱등) — 편·절·시행일
+            for mig in MIGRATIONS:
+                await conn.execute(mig)
+                print(f"[ok]   Migration: {mig.strip()}")
 
         # Indexes run outside the transaction so that each one is autocommitted
         # (CREATE INDEX CONCURRENTLY would require it; IF NOT EXISTS is safe here).

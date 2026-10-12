@@ -281,8 +281,10 @@ async def _compare_laws(args: dict, session: AsyncSession) -> dict:
     kp_name = args.get("kp_name", "")
     mapping = await get_mapping(session, kp_name)
 
-    if "error" in mapping:
-        return {"result": mapping["error"], "sources": []}
+    # 미매핑(mapped=False)은 오류가 아닌 정상 상태 — 안내문으로 답한다
+    if mapping.get("mapped") is False or "error" in mapping:
+        return {"result": mapping.get("message") or mapping.get("error") or f"{kp_name}: 남북 비교 매핑 없음",
+                "sources": []}
 
     kr_names = mapping.get("kr_names", [])
     relationship = mapping.get("relationship", "")

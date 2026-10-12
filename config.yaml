@@ -2,13 +2,13 @@ server:
   host: "0.0.0.0"
   port: 8000
 database:
-  host: "localhost"
+  host: "127.0.0.1"
   port: 5432
   user: "devadmin"
   password: "devadmin123"
   database: "legalize_kp"
 qdrant:
-  host: "localhost"
+  host: "127.0.0.1"
   port: 6333
   collection: "legalize_kp_laws"
 embedding:
@@ -18,6 +18,9 @@ embedding:
 data:
   repo_path: "E:/004_북한법/legalize-kp"
   kp_dir: "E:/004_북한법/legalize-kp/kp"
+  # 법령명 약칭/옛이름(name_alias) 원천 — import 시 laws.frontmatter.name_alias 로 주입.
+  # 수집 담당이 관리하는 파일(읽기만).
+  master_list: "E:/004_북한법/북한법령_마스터목록.json"
   # 남북비교 데이터(law_mappings/term_pairs)는 소비처인 api 안에 둔다.
   # 미설정 시 코드에서 repo_path/compare 로 폴백.
   compare_path: "E:/004_북한법/legalize-kp-api/data/compare"
@@ -27,3 +30,30 @@ external:
   lawgo_oc: "slpy22"
 mcp:
   server_name: "legalize-kp"
+# 출처 코드 설명(논문 팀 R3) — law_get/law_versions/law_history 응답의 source_desc 와
+# MCP law_sources 도구가 돌려준다. 문구는 잠정이며 수집 담당 확인 뒤 확정.
+# label = 화면 배지용 짧은 이름. 정본여부(frontmatter)는 '판본 출처 == nis'(국정원 법령집 수록본)
+# 여부라 신뢰도 표시가 아니다 — '비정본' 라벨은 쓰지 않는다(수집 T7-a 합의).
+sources:
+  mobu:
+    name: "법무부"
+    label: "법무부 통일법제DB"
+    desc: "법무부 통일법제 데이터베이스(unilaw.go.kr) 북한법령 원문(HWP·PDF). 한국 정부가 입력한 원문."
+  nis:
+    name: "국가정보원"
+    label: "국정원 법령집"
+    desc: "국가정보원 「2024 북한법령집」 상·하권. 권/쪽은 국정원권·국정원페이지 메타."
+  unification:
+    name: "통일부"
+    label: "통일부 발표"
+    desc: "통일부 발표 자료(개별법령 _meta.json source_label)."
+  nktechlab:
+    name: "NK TechLab"
+    label: "NK TechLab"
+    desc: "NK TechLab 북한법령 DB(2025-07 공개) — 2024년 판매 북한 스마트폰 앱 「조선민주주의인민공화국 법전」(2024년 중반 현행) 화면 OCR, 미검증 텍스트(띄어쓰기 잡음)."
+    unverified: true
+# 데이터(저장소·마스터목록)에서 제거된 옛 표기 → 정식명. 수집 측은 옛 오타명을 데이터에
+# 남기지 않으므로 옛 URL·질의 대응은 API 가 맡는다(T2 후속 ③). 조회·해석·웹 301 에 공통 사용.
+legacy_names:
+  반동문화사상문화배격법: 반동사상문화배격법
+  사회주의농총발전법: 사회주의농촌발전법

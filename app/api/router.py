@@ -89,6 +89,7 @@ async def law_endpoint(
     date2: str = Query(None),
     version: str = Query(None),
     threshold: float = Query(0.78),
+    articles_per_law: int = Query(5),  # search: 법령별 매칭 조문 상한 (T4 ⑤)
     session: AsyncSession = Depends(get_session),
 ):
     t0 = time.time()
@@ -99,7 +100,7 @@ async def law_endpoint(
             return make_response({"error": "q parameter required"}, t0)
         data = await law_svc.search(
             q, mode=mode, category=category, limit=limit,
-            page=page, per_page=per_page,
+            page=page, per_page=per_page, articles_per_law=articles_per_law,
         )
         total = data.get("total", 0)
         total_pages = math.ceil(total / per_page) if per_page > 0 else 1
@@ -163,6 +164,26 @@ async def law_endpoint(
             name, from_date=date1, to_date=date2, match_threshold=threshold
         )
         return make_response(data, t0)
+
+    elif action == "list":
+        # 전체 법령 목록(메타) — page/per_page 로 페이지네이션 (T4 (b))
+        offset = max(0, (page - 1) * per_page)
+        data = await law_svc.list_laws(category=category, offset=offset, limit=per_page)
+        total = data.get("total", 0)
+        total_pages = math.ceil(total / per_page) if per_page > 0 else 1
+        return make_response(
+            data, t0, total=total, page=page, per_page=per_page, total_pages=total_pages,
+        )
+
+    elif action == "resolve":
+        # 이름·별칭·약칭 → 정식 법령명 (T4 (e)/③)
+        if not name:
+            return make_response({"error": "name parameter required"}, t0)
+        return make_response(await law_svc.resolve_name(name), t0)
+
+    elif action == "sources":
+        # 출처 코드 설명 (T4 (g))
+        return make_response(law_svc.list_sources(), t0)
 
     else:
         return make_response({"error": f"Unknown action: {action}"}, t0)

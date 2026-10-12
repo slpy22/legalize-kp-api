@@ -53,11 +53,21 @@ async def law_search(
     mode: str = "hybrid",
     category: str | None = None,
     limit: int = 20,
+    page: int = 1,
+    per_page: int = 10,
+    articles_per_law: int = 5,
 ) -> dict:
-    """북한 법률을 검색합니다. mode: hybrid, keyword, semantic"""
+    """북한 법률을 검색합니다. mode: hybrid, keyword, semantic.
+
+    per_page 가 한 페이지의 법령 수 상한(기본 10), articles_per_law 가 법령별 매칭 조문 수
+    상한(기본 5)입니다. 더 많이 받으려면 두 값을 올리세요(예: per_page=50, articles_per_law=20).
+    """
     session, law_svc, _ = await _get_services()
     try:
-        return await law_svc.search(query, mode=mode, category=category, limit=limit)
+        return await law_svc.search(
+            query, mode=mode, category=category, limit=limit,
+            page=page, per_page=per_page, articles_per_law=articles_per_law,
+        )
     finally:
         await session.close()
 
@@ -67,11 +77,91 @@ async def law_get(
     name: str,
     article: str | None = None,
     grep: str | None = None,
+    version: str | None = None,
 ) -> dict:
-    """북한 법률의 조문을 조회합니다."""
+    """북한 법률의 조문을 조회합니다.
+
+    name 은 정식명·별칭·약칭('헌법') 모두 허용. version='YYYY-MM-DD' 를 주면 그 판본(law_versions)
+    의 전문/조문을 돌려줍니다(보유 판본은 law_versions 도구로 확인). 응답 meta 에 출처 설명·별칭·
+    날짜이견(date_disputes), 조문에 편(part)/장(chapter)/절(section)이 포함됩니다.
+    """
     session, law_svc, _ = await _get_services()
     try:
-        return await law_svc.get(name, article=article, grep=grep)
+        return await law_svc.get(name, article=article, grep=grep, version=version)
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_versions(name: str) -> dict:
+    """북한 법률의 보유 판본(본문 있는 버전) 목록 — 일자·action·출처(설명 포함)."""
+    session, law_svc, _ = await _get_services()
+    try:
+        return await law_svc.list_versions(name)
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_diff_text(name: str, date1: str, date2: str) -> dict:
+    """같은 법률의 두 판본(date1 → date2) 본문·조문을 나란히 돌려줍니다(조문 번호 기준 비교용)."""
+    session, law_svc, _ = await _get_services()
+    try:
+        return await law_svc.diff_text(name, from_date=date1, to_date=date2)
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_diff_semantic(
+    name: str,
+    date1: str,
+    date2: str,
+    match_threshold: float = 0.78,
+) -> dict:
+    """두 판본의 조문을 의미(임베딩 유사도)로 짝지어 신설/삭제/변경/동일로 분류합니다.
+
+    조문 번호가 밀려도 내용이 가까우면 같은 조항으로 대응시킵니다(match_threshold 기본 0.78).
+    """
+    session, law_svc, _ = await _get_services()
+    try:
+        return await law_svc.diff_semantic(
+            name, from_date=date1, to_date=date2, match_threshold=match_threshold
+        )
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_list(
+    category: str | None = None,
+    offset: int = 0,
+    limit: int = 100,
+) -> dict:
+    """전체 법령 목록(메타만)을 페이지네이션으로 돌려줍니다. 이름을 모르는 법령 탐색용."""
+    session, law_svc, _ = await _get_services()
+    try:
+        return await law_svc.list_laws(category=category, offset=offset, limit=limit)
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_resolve(name: str) -> dict:
+    """이름·별칭·약칭을 정식 법령명으로 해석합니다(모호하면 후보 목록)."""
+    session, law_svc, _ = await _get_services()
+    try:
+        return await law_svc.resolve_name(name)
+    finally:
+        await session.close()
+
+
+@mcp.tool()
+async def law_sources() -> dict:
+    """출처 코드(mobu/nis/unification)가 어느 법령집·판인지 설명합니다."""
+    session, law_svc, _ = await _get_services()
+    try:
+        return law_svc.list_sources()
     finally:
         await session.close()
 
@@ -151,13 +241,14 @@ from app.compare.beopmang_client import KrLawClient
 async def compare_mapping(
     category: str | None = None,
     limit: int = 20,
+    offset: int = 0,
 ) -> dict:
-    """남북한 법률 매핑 목록을 조회합니다. category로 분류 필터링 가능."""
+    """남북한 법률 매핑 목록을 조회합니다. category 로 분류 필터링, offset/limit 으로 전체 순회 가능."""
     factory = get_session_factory()
     session = factory()
     try:
         return await mapping_service.list_mappings(
-            session, category=category, limit=limit
+            session, category=category, limit=limit, per_page=limit, offset=offset
         )
     finally:
         await session.close()

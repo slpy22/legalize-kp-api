@@ -14,8 +14,12 @@ async def list_mappings(
     limit: int = 50,
     page: int = 1,
     per_page: int = 10,
+    offset: int | None = None,
 ) -> dict:
-    """Return compare_mappings rows (N:M schema) with optional filters, search, and pagination."""
+    """Return compare_mappings rows (N:M schema) with optional filters, search, and pagination.
+
+    offset 을 주면 page 대신 그 위치부터 per_page 개를 돌려준다(MCP offset/limit 용, T4 (b)).
+    """
     clauses: list[str] = []
     params: dict = {}
 
@@ -37,9 +41,10 @@ async def list_mappings(
     )
     total = count_result.scalar() or 0
 
-    offset = (page - 1) * per_page
+    if offset is None:
+        offset = (page - 1) * per_page
     params["limit"] = per_page
-    params["offset"] = offset
+    params["offset"] = max(0, int(offset))
 
     result = await session.execute(
         text(
@@ -72,9 +77,22 @@ async def get_mapping(session: AsyncSession, kp_name: str) -> dict:
     )
     row = result.mappings().first()
     if row is None:
-        return {"error": f"Mapping not found: {kp_name}"}
+        # 매핑 미작성은 오류가 아니라 정상 상태(관리 결정 T7 §9-③). 신규 법령(관광법·교육후원법·
+        # 각급 인민회의 대의원법, T6 미보유 13종 등)은 비교 매핑 생성 일감 전까지 이 상태다.
+        # 소비처(웹·챗봇·MCP)가 바로 쓸 수 있게 빈 필드를 채워 돌려준다.
+        return {
+            "kp_name": kp_name,
+            "mapped": False,
+            "status": "no_mapping",
+            "message": f"'{kp_name}' 의 남북 비교 매핑이 아직 작성되지 않았습니다(오류가 아닌 미작성 상태).",
+            "kr_names": [], "kr_categories": [], "overlap_areas": [],
+            "kp_unique": [], "kr_unique": [], "article_mappings": [],
+            "relationship": None, "confidence": None, "source": None, "notes": None,
+        }
 
     data = dict(row)
+    data["mapped"] = True
+    data["status"] = "mapped"
 
     # Ensure array fields are lists
     for arr_field in ("kr_names", "kr_categories", "overlap_areas", "kp_unique", "kr_unique"):
