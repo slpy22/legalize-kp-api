@@ -31,17 +31,20 @@ from app.core.config import load_config  # noqa: E402
 # ---------------------------------------------------------------------------
 
 # Article heading: ##### 제N조 (제목)  or  ##### 제N조
+# T8 #70: 제목 안의 괄호 한 겹을 허용한다 — '(도(직할시)공증기관의 관할)' 이 첫 ')' 에서
+# 잘려 '도(직할시' + 본문 첫 줄 '공증기관의 관할)' 로 들어가던 결함(8판본 16조).
+# 파이프라인 structure_parser 와 같은 규칙: 제목 = 괄호가 아닌 글자 | 한 겹 괄호쌍 의 반복.
 ARTICLE_RE = re.compile(
-    r"^#{5}\s+제(\d+)조\s*(?:[\(（](.+?)[\)）])?",
+    r"^#{5}\s+제(\d+)조\s*(?:[\(（]((?:[^()（）\n]|[\(（][^()（）\n]*[\)）])+)[\)）])?",
     re.MULTILINE,
 )
 # Item heading: ##### N. 머리글 — 조문 번호가 없는 법령(핵무력정책에 대하여·자위적핵보유국의 지위…·
 # 당의 유일적령도체계확립의 10대 원칙 등)의 항목 머리. '##### 제N조' 가 하나도 없을 때만 조문으로
 # 받는다(T7). 키는 T4 부칙 규약(라벨 접두 '부칙N')과 맞춰 '항N'.
 ITEM_RE = re.compile(r"^#{5}\s+(\d+)\.\s*(.*)$", re.MULTILINE)
-# 항목 머리글이 이 길이를 넘으면 제목이 아니라 본문 첫 문장으로 본다.
-# 실제 제목(핵무력정책: '핵무력의 사명' 등)은 20자 미만이고, 줄바꿈으로 끊긴 문장 조각은 40자 이상이다.
-ITEM_TITLE_MAX = 30
+# T8 #71: 항목 머리글은 길이·문장 여부와 무관하게 전부 article_title 로 넣는다(수집 측 제안,
+# 5·6차 처리 문서 §5). 10대 원칙처럼 원칙 문장 자체가 항목 제목인 문서에서 제목이 비고 본문
+# 첫 줄로 들어가던 T7 휴리스틱(ITEM_TITLE_MAX)을 없앤다.
 
 # Chapter heading: ## 제N장 제목
 # Note: some files concatenate the first article text on the same line as the
@@ -98,19 +101,21 @@ def _jsonb_default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 
-_ALIAS_CACHE: dict[str, list[str]] | None = None
+_ALIAS_CACHE: dict[str, dict[str, list[str]]] | None = None
 
 
-def _master_aliases() -> dict[str, list[str]]:
-    """북한법령_마스터목록.json 의 name_alias 를 {정식명: [별칭…]} 로 1회 로드.
+def _master_aliases() -> dict[str, dict[str, list[str]]]:
+    """북한법령_마스터목록.json 의 name_alias·abbreviations 를
+    {"name_alias": {정식명: [별칭…]}, "abbreviations": {정식명: [약칭…]}} 로 1회 로드.
 
-    경로는 config.yaml data.master_list. 파일이 없거나 깨져도 import 는 계속된다({}).
-    마스터목록은 수집 담당이 관리하므로 읽기만 한다. name_alias 는 문자열/배열 모두 허용.
+    경로는 config.yaml data.master_list. 파일이 없거나 깨져도 import 는 계속된다(빈 dict).
+    마스터목록은 수집 담당이 관리하므로 읽기만 한다. 값은 문자열/배열 모두 허용.
+    abbreviations 는 T9(수집)에서 들어오는 '의도된 약칭'(헌법 등) 목록 — T8 #74 뒤 유일한 약칭 해석 근거.
     """
     global _ALIAS_CACHE
     if _ALIAS_CACHE is not None:
         return _ALIAS_CACHE
-    _ALIAS_CACHE = {}
+    _ALIAS_CACHE = {"name_alias": {}, "abbreviations": {}}
     try:
         cfg_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.yaml"
@@ -124,18 +129,23 @@ def _master_aliases() -> dict[str, list[str]]:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         laws = data.get("laws", []) if isinstance(data, dict) else data
+        _ALIAS_CACHE = {"name_alias": {}, "abbreviations": {}}
         for law in laws:
             if not isinstance(law, dict):
                 continue
             name = str(law.get("name") or "").strip()
-            raw = law.get("name_alias")
-            if not name or not raw:
+            if not name:
                 continue
-            aliases = raw if isinstance(raw, list) else [raw]
-            cleaned = [str(a).strip() for a in aliases if str(a).strip() and str(a).strip() != name]
-            if cleaned:
-                _ALIAS_CACHE[name] = cleaned
-        print(f"[info] master_list aliases loaded: {len(_ALIAS_CACHE)} laws")
+            for key in ("name_alias", "abbreviations"):
+                raw = law.get(key)
+                if not raw:
+                    continue
+                vals = raw if isinstance(raw, list) else [raw]
+                cleaned = [str(a).strip() for a in vals if str(a).strip() and str(a).strip() != name]
+                if cleaned:
+                    _ALIAS_CACHE[key][name] = cleaned
+        print(f"[info] master_list aliases loaded: name_alias {len(_ALIAS_CACHE['name_alias'])} / "
+              f"abbreviations {len(_ALIAS_CACHE['abbreviations'])} laws")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] master_list alias load skipped: {e}")
     return _ALIAS_CACHE
@@ -148,14 +158,19 @@ def _inject_aliases(fm: dict, law_name: str) -> dict:
     옛 오타명(예: 사회주의농총발전법)과 약칭이 같은 메커니즘으로 정식명에 닿는다.
     """
     aliases = _master_aliases()
-    found = aliases.get(law_name) or aliases.get(str(fm.get("제목") or "").strip()) or []
-    if not found:
-        return fm
-    existing = fm.get("name_alias") or []
-    if isinstance(existing, str):
-        existing = [existing]
-    merged = list(dict.fromkeys([*[str(x) for x in existing], *found]))
-    return {**fm, "name_alias": merged}
+    title = str(fm.get("제목") or "").strip()
+    out = dict(fm)
+    # name_alias(옛 오타명·이표기) 와 abbreviations(의도된 약칭 — 수집 T9 에서 마스터목록에 추가)
+    # 를 각각의 키로 주입한다. 둘 다 get_by_name/resolve_name 의 별칭 폴백이 읽는다.
+    for key in ("name_alias", "abbreviations"):
+        found = (aliases.get(key) or {}).get(law_name) or (aliases.get(key) or {}).get(title) or []
+        if not found:
+            continue
+        existing = out.get(key) or []
+        if isinstance(existing, str):
+            existing = [existing]
+        out[key] = list(dict.fromkeys([*[str(x) for x in existing], *found]))
+    return out
 
 
 def parse_markdown_text(text: str) -> dict:
@@ -272,16 +287,9 @@ def parse_markdown_text(text: str) -> dict:
 
         kind = "조"
         if item_style:
-            # 항목 머리글: 짧으면 제목, 길면(문장) 본문 첫 줄로 — 전문검색에서 빠지지 않게 한다.
-            head = (m.group(2) or "").strip()
-            # 완결 문장('.'·'다'로 끝남)은 길이와 무관하게 본문. 제목은 짧은 명사구만.
-            # 조사로 끝나면 줄바꿈으로 끊긴 문장 조각(예: "…침략과 공격을") → 본문.
-            if (len(head) > ITEM_TITLE_MAX or head.endswith((".", "다", "。"))
-                    or (head and head[-1] in "을를은는이가에와과의로고며여서도")):
-                art_title = ""
-                content = (head + ("\n" + content if content else "")).strip()
-            else:
-                art_title = head
+            # 항목 머리글(##### N. …) 전체가 제목. 본문은 다음 항목 전까지(없으면 빈 문자열).
+            # 전문검색·임베딩은 law_name+article_title+content 를 함께 쓰므로 제목으로 둬도 빠지지 않는다.
+            art_title = (m.group(2) or "").strip()
             art_key = f"항{art_num}"
             kind = "항목"
         elif supplement_label:

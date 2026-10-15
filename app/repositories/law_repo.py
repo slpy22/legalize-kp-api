@@ -64,6 +64,7 @@ class LawRepository:
                 "WHERE frontmatter->'옛이름' @> CAST(:n AS jsonb) "
                 "   OR frontmatter->'former_names' @> CAST(:n AS jsonb) "
                 "   OR frontmatter->'name_alias' @> CAST(:n AS jsonb) "
+                "   OR frontmatter->'abbreviations' @> CAST(:n AS jsonb) "
                 "LIMIT 1"
             ),
             {"n": name_jsonb},
@@ -72,9 +73,10 @@ class LawRepository:
         if row:
             return dict(row)
 
-        # 3) 약칭(마지막 어절) 해석 — '헌법' → '조선민주주의인민공화국 헌법'.
-        #    공백 없는 짧은 이름이 어떤 법령명의 마지막 어절과 일치하고 그 후보가
-        #    정확히 하나일 때만 채택한다(둘 이상이면 모호 → None, 호출측이 오류 안내).
+        # 3) 마지막 어절(short) 폴백 — '헌법' → '조선민주주의인민공화국 헌법'. 후보가 정확히
+        #    하나일 때만. T8 #74 로 resolve_name 은 이 단계를 자동 해석하지 않지만, get 은 기존
+        #    URL(/law/헌법)·MCP 호출 호환을 위해 유지하고 서비스가 meta.name_warning 으로 알린다.
+        #    마스터목록 abbreviations(T9)가 들어오면 2) 에서 해석되어 이 단계에 오지 않는다.
         short = name.strip()
         if short and " " not in short:
             result = await self.session.execute(
@@ -89,8 +91,10 @@ class LawRepository:
     async def resolve_name(self, name: str) -> dict:
         """이름/별칭/약칭을 정식 법령명으로 해석한 결과를 설명과 함께 반환.
 
-        {"input", "resolved": 정식명|None, "law_id", "matched_by": exact|alias|short|None,
-         "candidates": [...]}  — 약칭이 둘 이상에 걸리면 candidates 에 후보를 담고 resolved=None.
+        {"input", "resolved": 정식명|None, "law_id", "matched_by": exact|legacy|alias|None,
+         "candidates": [{id, name, matched_by: "short"}…], "hint": str|None}
+        alias 단계는 옛이름/former_names/name_alias/abbreviations(마스터목록 약칭) 를 본다.
+        마지막 어절 일치(short)는 T8 #74 부터 resolved 로 올리지 않고 candidates 로만 돌려준다.
         """
         import json as _json
         raw = name
@@ -102,34 +106,40 @@ class LawRepository:
         r = exact.mappings().first()
         if r:
             return {"input": raw, "resolved": r["name"], "law_id": r["id"],
-                    "matched_by": "legacy" if legacy else "exact", "candidates": []}
+                    "matched_by": "legacy" if legacy else "exact", "candidates": [], "hint": None}
         name_jsonb = _json.dumps([name], ensure_ascii=False)
         alias = await self.session.execute(
             text(
                 "SELECT id, name FROM laws "
                 "WHERE frontmatter->'옛이름' @> CAST(:n AS jsonb) "
                 "   OR frontmatter->'former_names' @> CAST(:n AS jsonb) "
-                "   OR frontmatter->'name_alias' @> CAST(:n AS jsonb) LIMIT 1"
+                "   OR frontmatter->'name_alias' @> CAST(:n AS jsonb) "
+                "   OR frontmatter->'abbreviations' @> CAST(:n AS jsonb) LIMIT 1"
             ),
             {"n": name_jsonb},
         )
         r = alias.mappings().first()
         if r:
             return {"input": name, "resolved": r["name"], "law_id": r["id"],
-                    "matched_by": "alias", "candidates": []}
+                    "matched_by": "alias", "candidates": [], "hint": None}
+        # T8 #74: 마지막 어절(short) 일치는 자동 해석하지 않는다 — '사회보장법' 이 별개 법령명일
+        # 수 있는데 '사회보험 및 사회보장법' 에 조용히 붙었다(논문 팀 4차 #48·7차 #74).
+        # 후보로만 돌려주고 hint 로 알린다. 의도된 약칭(헌법 등)은 마스터목록 abbreviations →
+        # frontmatter->'abbreviations' 로 들어와 위 alias 단계에서 해석된다.
         short = name.strip()
         cands: list[dict] = []
+        hint = None
         if short and " " not in short:
             res = await self.session.execute(
                 text("SELECT id, name FROM laws WHERE name LIKE :pat ORDER BY name LIMIT 20"),
                 {"pat": f"% {short}"},
             )
-            cands = [dict(x) for x in res.mappings().all()]
-            if len(cands) == 1:
-                return {"input": name, "resolved": cands[0]["name"], "law_id": cands[0]["id"],
-                        "matched_by": "short", "candidates": []}
+            cands = [{**dict(x), "matched_by": "short"} for x in res.mappings().all()]
+            if cands:
+                hint = ("마지막 어절이 같은 법령 후보입니다. 등록된 약칭(abbreviations)이 아니므로 "
+                        "자동 해석하지 않았습니다 — 별개 법령명일 수 있습니다.")
         return {"input": name, "resolved": None, "law_id": None,
-                "matched_by": None, "candidates": cands}
+                "matched_by": None, "candidates": cands, "hint": hint}
 
     async def get_by_id(self, law_id: int) -> dict | None:
         result = await self.session.execute(

@@ -33,16 +33,16 @@ def test_item_style_law_is_parsed_with_hang_keys():
     assert all(a["supplement"] is None for a in arts)
 
 
-def test_long_item_head_becomes_content_not_title():
+def test_item_head_is_title_regardless_of_length():
+    """T8 #71: 머리글은 길이·문장 여부와 무관하게 article_title(T7 의 길이 휴리스틱 폐기)."""
     arts = {a["article_number"]: a for a in parse_markdown_text(ITEM_LAW)["articles"]}
     a1 = arts["항1"]
-    assert a1["article_title"] == ""            # 60자 넘는 머리글 → 제목 아님
-    assert a1["content"].startswith("조선민주주의인민공화국의 핵무기는")  # 본문으로 들어가 전문검색 가능
+    assert a1["article_title"] == LONG and a1["content"] == ""
     a2 = arts["항2"]
-    assert a2["article_title"] == "핵무력의 사명"  # 짧은 머리글 → 제목
+    assert a2["article_title"] == "핵무력의 사명"
     assert a2["content"] == "핵무력은 침략과 공격을 억제한다.\n억제가 실패하면 격퇴한다."
     a10 = arts["항10"]
-    assert a10["article_title"] == "" and a10["content"].startswith("해당 기관들은")
+    assert a10["article_title"].startswith("해당 기관들은") and a10["content"] == ""
 
 
 def test_item_headings_ignored_when_law_has_real_articles():

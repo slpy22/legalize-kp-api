@@ -148,7 +148,9 @@ async def law_list(
 
 @mcp.tool()
 async def law_resolve(name: str) -> dict:
-    """이름·별칭·약칭을 정식 법령명으로 해석합니다(모호하면 후보 목록)."""
+    """이름·옛 표기·별칭·등록 약칭(abbreviations)을 정식 법령명으로 해석합니다.
+    마지막 어절만 같은 법령(예: '사회보장법'→'사회보험 및 사회보장법')은 자동 해석하지 않고
+    candidates(matched_by=short)+hint 로만 돌려줍니다 — 별개 법령명일 수 있기 때문입니다."""
     session, law_svc, _ = await _get_services()
     try:
         return await law_svc.resolve_name(name)

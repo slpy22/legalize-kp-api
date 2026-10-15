@@ -7,7 +7,7 @@ import re
 import httpx
 
 from app.core.config import get_config
-from app.repositories.law_repo import LawRepository
+from app.repositories.law_repo import LawRepository, canonical_name
 from app.services.search_engine import SearchEngine
 
 logger = logging.getLogger("law_service")
@@ -126,7 +126,7 @@ def law_meta(law: dict) -> dict:
     """법령 공통 메타 — 출처 설명·별칭·날짜이견(frontmatter '날짜이견' 그대로)·출처표시(provenance)."""
     fm = _fm(law)
     aliases: list[str] = []
-    for key in ("name_alias", "옛이름", "former_names"):
+    for key in ("name_alias", "abbreviations", "옛이름", "former_names"):
         v = fm.get(key)
         if isinstance(v, str):
             v = [v]
@@ -139,6 +139,16 @@ def law_meta(law: dict) -> dict:
         # 수집 측 계약: [{항목, 원문값, 이견값, 출처, 비고?}] (문자열, 날짜는 ISO)
         "date_disputes": fm.get("날짜이견") or [],
     }
+
+def name_match_warning(requested: str, law: dict, aliases: list[str]) -> str | None:
+    """요청한 이름이 정식명·옛 표기·별칭·약칭 어느 것도 아닌데(= 마지막 어절 폴백으로 찾아진 경우)
+    경고 문구를 돌려준다(T8 #74). 정식명/legacy/alias 일치면 None."""
+    req = canonical_name(requested or "").strip()
+    if not req or req == str(law.get("name") or "").strip() or req in set(aliases):
+        return None
+    return (f"'{requested}' 은 등록된 법령명·약칭이 아니어서 마지막 어절이 같은 "
+            f"'{law.get('name')}' 로 해석했습니다. 별개 법령명일 수 있으니 확인하세요.")
+
 
 # ---------------------------------------------------------------------------
 # 자체 에이전트(Session Manager) — 개정 diff 분석 리포트를 구독 기반 Claude 로 생성.
@@ -270,6 +280,10 @@ class LawService:
         law = await self.law_repo.get_by_name(name)
         if law is None:
             return {"error": f"법률을 찾을 수 없습니다: {name}"}
+        meta = law_meta(law)
+        warn = name_match_warning(name, law, meta["aliases"])
+        if warn:
+            meta["name_warning"] = warn
 
         # 특정 버전 요청 — law_versions 테이블에서 본문 가져옴
         if version:
@@ -287,7 +301,7 @@ class LawService:
                 articles_list = [a for a in articles_list if grep in (a.get("content") or "")]
             return {
                 "law": law,
-                "meta": law_meta(law),
+                "meta": meta,
                 "version": {
                     "version_date": v["version_date"],
                     "action": v["action"],
@@ -308,7 +322,7 @@ class LawService:
         )
         return {
             "law": law,
-            "meta": law_meta(law),
+            "meta": meta,
             "articles": articles,
             "total_articles": len(articles),
         }

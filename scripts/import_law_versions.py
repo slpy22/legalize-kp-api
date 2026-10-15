@@ -50,6 +50,25 @@ DDL_INDEXES = [
 ]
 
 
+def version_action(fm: dict, version_date: str, dump_action: str | None) -> str | None:
+    """판본의 action(채택/수정보충/…)을 frontmatter 근거로 정한다(T8 #72).
+
+    1) 개정이력 가운데 일자 == version_date 인 항목의 '내용'
+    2) 없으면 채택일 == version_date → '채택'
+    3) 그 외 dump(versions.json)의 action 그대로(파이프라인 기본값 '수정보충').
+    history() 의 amendments 행도 같은 개정이력 '내용' 에서 나오므로 두 응답이 일치한다.
+    """
+    vd = str(version_date or "").strip()
+    for h in fm.get("개정이력") or []:
+        if isinstance(h, dict) and str(h.get("일자") or "").strip() == vd:
+            act = str(h.get("내용") or "").strip()
+            if act:
+                return act
+    if vd and str(fm.get("채택일") or "").strip() == vd:
+        return "채택"
+    return dump_action
+
+
 def _parse_date(value: str) -> date | None:
     if not value:
         return None
@@ -130,6 +149,10 @@ async def main(input_path: str) -> None:
             fm = parsed["frontmatter"] or {}
             source = fm.get("출처")
             text_unavailable = bool(fm.get("텍스트미확보"))
+            # T8 #72: versions.json 의 action 은 파이프라인 커밋 메시지 기본값('수정보충')이라
+            # 채택 판본 148건이 어긋났다. 판본 frontmatter 개정이력(같은 일자)의 '내용' 을 우선,
+            # 없으면 채택일==판본일자 → '채택', 그 외에만 dump 값 → history 와 같은 근거로 맞춘다.
+            action = version_action(fm, e["version_date"], e.get("action"))
 
             # placeholder(텍스트 미확보) 버전은 본문 없이 메타만 기록
             full_text = parsed["full_text"]
@@ -152,7 +175,7 @@ async def main(input_path: str) -> None:
                 """,
                 law_id,
                 version_date,
-                e.get("action"),
+                action,
                 source,
                 full_text,
                 json.dumps(articles_list, ensure_ascii=False, default=_jsonb_default),
